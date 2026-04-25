@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<!--
+  ============================================================
+  Claude Rules Audit — HTML Template
+  ============================================================
+  Self-contained decision UI for auditing user-scope rules under ~/.claude/rules/.
+
+  HOW TO USE THIS TEMPLATE:
+  1. Locate the AUDIT_DATA_INJECTION_POINT marker in the <script> tag below
+  2. Replace the placeholder data structure with the populated arrays. Five arrays needed:
+
+     existingRules: per-rule audit cards. Each item:
+       {
+         id: 'r-<name>',
+         name: '<name>.md',
+         verdict: 'keep' | 'edit' | 'refresh',
+         sizeLines: 84, sizeKB: '3.5KB',
+         currentFM: 'description (only)' | 'paths: ...' | 'none (always-loaded)',
+         actualLoad: 'always' | 'path-scoped',
+         declaredLoad: 'always' | 'on-demand' | 'path-scoped',
+         match: true | false,
+         whatItDoes: '...comprehensive 3-5 sentence summary of rule content...',
+         whenItFires: '...when it loads + concrete trigger conditions...',
+         whyItExists: '...originating problem...',
+         withoutThisRule: '...what would go wrong...',
+         quality: '...fresh / stale / has issues...',
+         issues: '...specific problems...',
+         actionItems: ['action 1', 'action 2'],
+         agentReason: '...one paragraph reasoning for verdict...'
+       }
+
+     mismatches: CLAUDE.md classification fixes. Each item:
+       { id: 'm-<name>', name: '<name>.md', currentDecl: 'always',
+         actualBehavior: 'path-scoped (...)', verdict: 'edit', rationale: '...' }
+
+     newRules: candidate new rule files. Each item:
+       { id: 'n-<name>', name: '<name>.md', source: 'session' | 'codebase',
+         verdict: 'add' | 'maybe', recommend: 'STRONG' | 'MAYBE',
+         frequency: '17 sessions / 9 projects', loadingMode: 'always (no frontmatter)',
+         proposedContent: '...full markdown that would go into the rule file...',
+         contentSketch: '...one-line summary...',
+         evidence: '...specific quotes/sessions...',
+         agentReason: '...',
+         cost: '~1.5KB per session' }
+
+     extensions: small additions to existing rules. Each item:
+       { id: 'e-<name>', target: '<existing-rule>.md', verdict: 'add',
+         what: '...what to add...', whereInTarget: '...location...',
+         rationale: '...', proposedSnippet: '...full markdown snippet...' }
+
+     refreshes: keyed by existing-rule id. Each value:
+       { value: 'low' | 'medium' | 'medium-high' | 'high',
+         scope: '...what a refresh would entail...',
+         benefit: '...why it would pay off...' }
+
+  3. Save populated file as `rules-audit.html` in user's CWD
+  4. Tell user to open: `open ./rules-audit.html`
+  ============================================================
+-->
+<html lang="en-AU">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Rules Audit</title>
+<style>
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --surface-2: #334155; --border: #475569;
+    --text: #f1f5f9; --muted: #94a3b8; --accent: #38bdf8;
+    --keep: #22c55e; --edit: #f59e0b; --refresh: #ef4444;
+    --add: #8b5cf6; --skip: #64748b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px; line-height: 1.6; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 26px; margin: 0 0 4px 0; }
+  h2 { font-size: 18px; margin: 24px 0 8px 0; padding-top: 8px; border-top: 1px solid var(--border); }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .toolbar { position: sticky; top: 0; z-index: 10; background: var(--bg);
+    padding: 12px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px;
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button { background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: var(--border); }
+  button.primary { background: var(--accent); color: #0f172a; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  button.bot { background: #7c3aed; color: white; border-color: #7c3aed; font-weight: 600; }
+  button.bot:hover { filter: brightness(1.1); }
+  .stats { margin-left: auto; font-size: 13px; color: var(--muted); }
+  details.section { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; margin-bottom: 12px; }
+  details.section > summary { padding: 12px 16px; cursor: pointer; font-weight: 600; font-size: 15px;
+    list-style: none; display: flex; align-items: center; gap: 8px; }
+  details.section > summary::-webkit-details-marker { display: none; }
+  details.section > summary::before { content: '▶'; font-size: 10px;
+    transition: transform 0.15s; color: var(--muted); }
+  details.section[open] > summary::before { transform: rotate(90deg); }
+  details.section .section-body { padding: 0 16px 12px 16px; }
+  .section-meta { margin-left: auto; font-size: 12px; color: var(--muted); font-weight: 400; }
+  .rule { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; background: var(--surface-2); }
+  .rule[data-decision="keep"] { border-left: 4px solid var(--keep); }
+  .rule[data-decision="edit"] { border-left: 4px solid var(--edit); }
+  .rule[data-decision="refresh"] { border-left: 4px solid var(--refresh); }
+  .rule[data-decision="add"] { border-left: 4px solid var(--add); }
+  .rule[data-decision="skip"] { border-left: 4px solid var(--skip); }
+  .rule[data-decision="maybe"] { border-left: 4px solid var(--edit); }
+  .rule-header { display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; cursor: pointer; flex-wrap: wrap; }
+  .rule-name { font-weight: 600; font-family: 'SF Mono', Menlo, monospace;
+    font-size: 13px; flex: 1; min-width: 200px; }
+  .rule-tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--bg); color: var(--muted); }
+  .rule-tag.warn { background: #422006; color: #fbbf24; }
+  .rule-tag.bug { background: #450a0a; color: #fca5a5; }
+  .rule-tag.spec { background: #064e3b; color: #6ee7b7; }
+  .rule-tag.session { background: #312e81; color: #a5b4fc; }
+  .rule-tag.size { background: #0c4a6e; color: #7dd3fc; }
+  .verdict-badge { font-size: 11px; padding: 3px 8px; border-radius: 4px;
+    font-weight: 700; letter-spacing: 0.3px; }
+  .verdict-keep { background: rgba(34, 197, 94, 0.2); color: var(--keep); border: 1px solid var(--keep); }
+  .verdict-edit { background: rgba(245, 158, 11, 0.2); color: var(--edit); border: 1px solid var(--edit); }
+  .verdict-refresh { background: rgba(239, 68, 68, 0.2); color: var(--refresh); border: 1px solid var(--refresh); }
+  .verdict-add { background: rgba(139, 92, 246, 0.2); color: var(--add); border: 1px solid var(--add); }
+  .verdict-maybe { background: rgba(245, 158, 11, 0.15); color: var(--edit); border: 1px solid var(--edit); }
+  .decision { display: flex; gap: 4px; }
+  .decision label { cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 12px;
+    background: var(--bg); border: 1px solid var(--border); transition: all 0.1s; }
+  .decision label:hover { background: var(--surface); }
+  .decision input { display: none; }
+  .decision label:has(input[value="keep"]:checked) { background: var(--keep); color: #052e16; border-color: var(--keep); }
+  .decision label:has(input[value="edit"]:checked) { background: var(--edit); color: #451a03; border-color: var(--edit); }
+  .decision label:has(input[value="refresh"]:checked) { background: var(--refresh); color: #450a0a; border-color: var(--refresh); }
+  .decision label:has(input[value="add"]:checked) { background: var(--add); color: #2e1065; border-color: var(--add); }
+  .decision label:has(input[value="skip"]:checked) { background: var(--skip); color: #f1f5f9; border-color: var(--skip); }
+  .decision label:has(input[value="maybe"]:checked) { background: var(--edit); color: #451a03; border-color: var(--edit); }
+  .rule-body { padding: 0 12px 12px 12px; display: none;
+    border-top: 1px solid var(--border); margin-top: -1px; }
+  .rule[data-open="true"] .rule-body { display: block; padding-top: 12px; }
+  .rule-body h4 { margin: 14px 0 6px 0; font-size: 12px;
+    color: var(--text); text-transform: uppercase; letter-spacing: 0.6px;
+    border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .rule-body p { margin: 6px 0; color: #cbd5e1; font-size: 13px; }
+  .rule-body ul { margin: 4px 0 8px 0; padding-left: 20px; color: #cbd5e1; font-size: 13px; }
+  .rule-body li { margin-bottom: 3px; }
+  .agent-reason { background: rgba(124, 58, 237, 0.1); border-left: 3px solid #7c3aed;
+    padding: 10px 14px; margin: 10px 0; border-radius: 4px; font-size: 13px; color: #e9d5ff; }
+  .agent-reason strong { color: #c4b5fd; }
+  pre.frontmatter, pre.code { background: #020617; color: #cbd5e1;
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 10px 14px; font-family: 'SF Mono', Menlo, monospace; font-size: 12px;
+    overflow-x: auto; margin: 6px 0; white-space: pre-wrap; line-height: 1.5; }
+  .without { background: rgba(239, 68, 68, 0.05); border-left: 3px solid var(--refresh);
+    padding: 8px 12px; margin: 6px 0; border-radius: 4px; font-size: 13px; }
+  .without strong { color: #fca5a5; }
+  textarea.note { width: 100%; min-height: 60px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 8px;
+    font-family: -apple-system, sans-serif; font-size: 13px; resize: vertical; margin-top: 8px; }
+  #output-section { margin-top: 32px; padding: 16px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+  #output { width: 100%; min-height: 400px; background: #020617; color: #cbd5e1;
+    border: 1px solid var(--border); border-radius: 4px; padding: 12px;
+    font-family: 'SF Mono', Menlo, monospace; font-size: 12px; resize: vertical; }
+  .copy-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .copied { color: var(--keep); font-size: 12px; }
+  .filter-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .filter-row input[type="text"] { flex: 1; min-width: 200px;
+    padding: 6px 10px; background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+  details.inner-detail { margin: 6px 0; background: rgba(2, 6, 23, 0.4);
+    border: 1px solid var(--border); border-radius: 4px; }
+  details.inner-detail > summary { padding: 6px 10px; cursor: pointer; font-size: 12px;
+    color: var(--muted); list-style: none; }
+  details.inner-detail > summary::-webkit-details-marker { display: none; }
+  details.inner-detail > summary::before { content: '▸ '; color: var(--muted); }
+  details.inner-detail[open] > summary::before { content: '▾ '; }
+  details.inner-detail > div { padding: 0 10px 10px 10px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .spec-block { background: rgba(6, 78, 59, 0.15); border-left: 3px solid #6ee7b7;
+    padding: 10px 14px; margin: 10px 0; border-radius: 4px; font-size: 13px; }
+  .bug-block { background: rgba(69, 10, 10, 0.3); border-left: 3px solid #fca5a5;
+    padding: 10px 14px; margin: 10px 0; border-radius: 4px; font-size: 13px; }
+  table.spec { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+  table.spec th, table.spec td { padding: 6px 8px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+  table.spec th { background: var(--bg); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  table.spec code { background: #020617; padding: 1px 4px; border-radius: 3px; font-size: 12px; color: #fbbf24; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📐 Claude Rules Audit</h1>
+  <div class="sub">Comprehensive audit of <code>~/.claude/rules/</code> against the official Claude Code spec, plus codebase + session-history scan for missing rules. Each item shows what it does, why it exists, when it fires, what would go wrong without it, and full proposed content for new rules.</div>
+
+  <div class="toolbar">
+    <button class="bot" onclick="applyAgentVerdicts()">🤖 Apply all agent verdicts</button>
+    <button onclick="reset()">↺ Reset</button>
+    <button onclick="expandAll(true)">⬇️ Expand all</button>
+    <button onclick="expandAll(false)">⬆️ Collapse all</button>
+    <button class="primary" onclick="generateMarkdown()">📋 Generate Markdown</button>
+    <span class="stats" id="stats"></span>
+  </div>
+
+  <div class="filter-row">
+    <input type="text" id="search" placeholder="🔍 Filter by name, content, or evidence..." oninput="applyFilter()">
+  </div>
+
+  <details class="section">
+    <summary>📚 1. Official Claude Code rule spec — quick reference <span class="section-meta">expand for citations + bugs</span></summary>
+    <div class="section-body" id="spec-body">
+      <p>The spec primer content is populated from Agent 3's lookup. See <code>references/claude-config-spec.md</code> in the skill directory for the full reference.</p>
+    </div>
+  </details>
+
+  <h2>📂 2. Existing rules audit</h2>
+  <div id="existing-rules"></div>
+
+  <h2>⚖️ 3. CLAUDE.md classification mismatches</h2>
+  <p class="sub">Your CLAUDE.md rule index says these load differently than their actual frontmatter behaviour. Functionally they all work — but the index misleads readers.</p>
+  <div id="mismatches"></div>
+
+  <h2>✨ 4. New rule candidates</h2>
+  <p class="sub">From session-history archaeology + cross-project pattern scan. Each card includes the full proposed file content.</p>
+  <div id="new-rules"></div>
+
+  <h2>🪡 5. Small extensions to existing rules</h2>
+  <p class="sub">Don't create new files — fold these into existing rules to avoid bloating <code>~/.claude/rules/</code>.</p>
+  <div id="extensions"></div>
+
+  <div id="output-section">
+    <h2 style="margin-top:0;border:none;padding:0;">📋 Markdown output</h2>
+    <p class="sub">Click <strong>Generate Markdown</strong> above, then copy this back to chat.</p>
+    <textarea id="output" placeholder="Markdown will appear here..."></textarea>
+    <div class="copy-row">
+      <button onclick="copyOutput()">📋 Copy to clipboard</button>
+      <span id="copied" class="copied" style="display:none;">✓ Copied!</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'claude-rules-audit-v1';
+
+// ============================================================
+// AUDIT_DATA_INJECTION_POINT
+// Replace the placeholder structure below with your populated audit data.
+// Five arrays + one keyed object are needed. See HTML comment block at top of file for shape.
+// ============================================================
+const auditData = /* AUDIT_DATA_INJECTION_POINT */ {
+  existingRules: [
+    {
+      id: 'r-example',
+      name: 'example.md',
+      verdict: 'keep',
+      sizeLines: 30, sizeKB: '1.5KB',
+      currentFM: 'none (always-loaded)',
+      actualLoad: 'always', declaredLoad: 'always', match: true,
+      whatItDoes: 'Example rule. Replace this entire data structure with your real audit data.',
+      whenItFires: 'Always loaded.',
+      whyItExists: 'Example.',
+      withoutThisRule: 'Example.',
+      quality: 'Example.',
+      issues: 'None.',
+      actionItems: [],
+      agentReason: 'Example reasoning.'
+    }
+  ],
+  mismatches: [],
+  newRules: [],
+  extensions: [],
+  refreshes: {
+    'r-example': { value: 'low', scope: 'Example.', benefit: 'Example.' }
+  }
+};
+
+const { existingRules, mismatches, newRules, extensions, refreshes } = auditData;
+
+let state = {};
+try { state = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch(e) { state = {}; }
+
+function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); updateStats(); }
+function setDecision(id, decision) { if (!state[id]) state[id] = {}; state[id].decision = decision; saveState();
+  document.querySelector(`[data-id="${id}"]`).setAttribute('data-decision', decision); }
+function setNote(id, note) { if (!state[id]) state[id] = {}; state[id].note = note; saveState(); }
+function toggleRule(id) { const el = document.querySelector(`[data-id="${id}"]`);
+  el.setAttribute('data-open', el.getAttribute('data-open') === 'true' ? 'false' : 'true'); }
+function applyAgentVerdicts() {
+  if (!confirm('Apply all agent verdicts as your decisions?')) return;
+  [...existingRules, ...mismatches, ...newRules, ...extensions].forEach(item => {
+    setDecision(item.id, item.verdict);
+    const radio = document.querySelector(`input[name="d-${item.id}"][value="${item.verdict}"]`);
+    if (radio) radio.checked = true;
+  });
+}
+function reset() {
+  if (!confirm('Clear all decisions and notes?')) return;
+  state = {}; localStorage.removeItem(STORAGE_KEY);
+  document.querySelectorAll('input[type="radio"]').forEach(r => r.checked = false);
+  document.querySelectorAll('textarea.note').forEach(t => t.value = '');
+  document.querySelectorAll('.rule').forEach(s => s.removeAttribute('data-decision'));
+  updateStats();
+}
+function expandAll(open) {
+  document.querySelectorAll('details.section').forEach(d => d.open = open);
+  document.querySelectorAll('.rule').forEach(s => s.setAttribute('data-open', open));
+}
+function applyFilter() {
+  const q = document.getElementById('search').value.toLowerCase();
+  document.querySelectorAll('.rule').forEach(el => {
+    const text = el.textContent.toLowerCase();
+    el.style.display = (!q || text.includes(q)) ? '' : 'none';
+  });
+}
+function updateStats() {
+  let total = 0, decided = 0;
+  [...existingRules, ...mismatches, ...newRules, ...extensions].forEach(item => {
+    total++;
+    if (state[item.id]?.decision) decided++;
+  });
+  document.getElementById('stats').innerHTML = `<span style="color: var(--muted)">○ ${decided}/${total} decided</span>`;
+}
+
+function generateMarkdown() {
+  let md = `# 📐 Claude Rules Audit Results\n\n_Generated: ${new Date().toISOString().slice(0,16).replace('T', ' ')}_\n\n`;
+  const decisionsBy = (items, decision) => items.filter(i => state[i.id]?.decision === decision);
+
+  md += `## ✅ Existing rules — keep as-is\n`;
+  decisionsBy(existingRules, 'keep').forEach(r => md += `- **${r.name}**${state[r.id]?.note ? ' — ' + state[r.id].note : ''}\n`);
+
+  md += `\n## ✏️ Existing rules — edit/refresh\n`;
+  decisionsBy(existingRules, 'edit').forEach(r => md += `- **${r.name}** — ${r.actionItems.join('; ')}${state[r.id]?.note ? ' [my note: ' + state[r.id].note + ']' : ''}\n`);
+  decisionsBy(existingRules, 'refresh').forEach(r => md += `- **${r.name}** (major refresh)${state[r.id]?.note ? ' — ' + state[r.id].note : ''}\n`);
+
+  md += `\n## ⚖️ CLAUDE.md classification fixes\n`;
+  decisionsBy(mismatches, 'edit').forEach(m => md += `- **${m.name}** — change index from "${m.currentDecl}" to: ${m.actualBehavior}\n`);
+
+  md += `\n## ✨ New rules to add\n`;
+  decisionsBy(newRules, 'add').forEach(r => {
+    md += `\n### ${r.name} (${r.loadingMode})\nSource: ${r.source} — ${r.frequency}\n`;
+    if (state[r.id]?.note) md += `My note: ${state[r.id].note}\n`;
+  });
+
+  md += `\n## 🪡 Extensions to existing rules\n`;
+  decisionsBy(extensions, 'add').forEach(e => {
+    md += `- **${e.target}** — ${e.what}\n`;
+    if (state[e.id]?.note) md += `  - my note: ${state[e.id].note}\n`;
+  });
+
+  md += `\n## 🤔 Maybe / undecided\n`;
+  decisionsBy(newRules, 'maybe').forEach(r => md += `- **${r.name}** — ${state[r.id]?.note || '(no note)'}\n`);
+  [...existingRules, ...mismatches, ...newRules, ...extensions].forEach(item => {
+    if (!state[item.id]?.decision) md += `- **${item.name || item.target}** — undecided\n`;
+  });
+
+  document.getElementById('output').value = md;
+  document.getElementById('output-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+function copyOutput() {
+  const out = document.getElementById('output');
+  out.select(); document.execCommand('copy');
+  const c = document.getElementById('copied');
+  c.style.display = 'inline'; setTimeout(() => c.style.display = 'none', 2000);
+}
+
+function escapeHtml(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function renderExistingRule(r) {
+  const s = state[r.id] || {};
+  const verdictIcon = { keep: '✅', edit: '✏️', refresh: '🔥' }[r.verdict];
+  const matchIcon = r.match ? '✅' : '⚠️';
+  const refresh = (refreshes && refreshes[r.id]) || { value: 'low', scope: '', benefit: '' };
+  const refreshBadgeColor = { 'high': '#ef4444', 'medium-high': '#f97316', 'medium': '#f59e0b', 'low': '#64748b' }[refresh.value] || '#64748b';
+  const refreshIcon = { 'high': '🔥🔥🔥', 'medium-high': '🔥🔥', 'medium': '🔥', 'low': '·' }[refresh.value] || '·';
+  const decisionHtml = ['keep', 'edit', 'refresh'].map(d => {
+    const checked = s.decision === d ? 'checked' : '';
+    const icon = { keep: '✅ keep', edit: '✏️ edit', refresh: '🔥 refresh' }[d];
+    return `<label><input type="radio" name="d-${r.id}" value="${d}" ${checked} onchange="setDecision('${r.id}','${d}')"><span>${icon}</span></label>`;
+  }).join('');
+  return `<div class="rule" data-id="${r.id}" ${s.decision ? `data-decision="${s.decision}"` : ''} data-open="false">
+    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${r.id}')">
+      <span class="rule-name">${r.name}</span>
+      <span class="rule-tag">${matchIcon} ${r.actualLoad}</span>
+      <span class="rule-tag size">${r.sizeLines}L · ${r.sizeKB}</span>
+      <span class="verdict-badge verdict-${r.verdict}">🤖 ${verdictIcon} ${r.verdict.toUpperCase()}</span>
+      <span class="rule-tag" style="background: rgba(0,0,0,0.4); color: ${refreshBadgeColor}; border: 1px solid ${refreshBadgeColor};">${refreshIcon} refresh: ${refresh.value}</span>
+      <div class="decision" onclick="event.stopPropagation()">${decisionHtml}</div>
+    </div>
+    <div class="rule-body">
+      <h4>📖 What this rule does</h4><p>${r.whatItDoes}</p>
+      <h4>🎯 When it fires</h4><p>${r.whenItFires}</p>
+      <h4>💡 Why it exists</h4><p>${r.whyItExists}</p>
+      <div class="without"><strong>🚫 Without this rule:</strong> ${r.withoutThisRule}</div>
+      <h4>📊 Frontmatter + loading</h4>
+      <p><strong>Current frontmatter:</strong> <code>${r.currentFM}</code></p>
+      <p><strong>Declared in CLAUDE.md:</strong> ${r.declaredLoad}</p>
+      <p><strong>Actually loads:</strong> ${r.actualLoad} ${r.match ? '✅ match' : '⚠️ mismatch'}</p>
+      <h4>🔍 Quality assessment</h4><p>${r.quality}</p>
+      <h4>⚠️ Issues</h4><p>${r.issues}</p>
+      ${r.actionItems.length ? `<h4>📝 Action items (small edits)</h4><ul>${r.actionItems.map(a => '<li>' + a + '</li>').join('')}</ul>` : ''}
+      <div style="background: rgba(239, 68, 68, 0.08); border-left: 3px solid ${refreshBadgeColor}; padding: 10px 14px; margin: 10px 0; border-radius: 4px; font-size: 13px;">
+        <p style="margin: 0 0 6px 0;"><strong style="color: ${refreshBadgeColor};">${refreshIcon} Potential refresh — value: ${refresh.value.toUpperCase()}</strong></p>
+        <p style="margin: 4px 0;"><strong>Scope:</strong> ${refresh.scope}</p>
+        <p style="margin: 4px 0;"><strong>Benefit:</strong> ${refresh.benefit}</p>
+      </div>
+      <div class="agent-reason"><strong>🤖 Agent verdict — ${r.verdict.toUpperCase()}:</strong> ${r.agentReason}</div>
+      <textarea class="note" placeholder="Notes / override reason..." onchange="setNote('${r.id}', this.value)">${escapeHtml(s.note)}</textarea>
+    </div></div>`;
+}
+
+function renderMismatch(m) {
+  const s = state[m.id] || {};
+  const decisionHtml = ['edit', 'skip'].map(d => {
+    const checked = s.decision === d ? 'checked' : '';
+    const icon = { edit: '✏️ fix index', skip: '⏭️ leave it' }[d];
+    return `<label><input type="radio" name="d-${m.id}" value="${d}" ${checked} onchange="setDecision('${m.id}','${d}')"><span>${icon}</span></label>`;
+  }).join('');
+  return `<div class="rule" data-id="${m.id}" ${s.decision ? `data-decision="${s.decision}"` : ''} data-open="false">
+    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${m.id}')">
+      <span class="rule-name">${m.name}</span>
+      <span class="rule-tag warn">declared: ${m.currentDecl}</span>
+      <span class="rule-tag">actual: ${m.actualBehavior.split('(')[0].trim()}</span>
+      <span class="verdict-badge verdict-edit">🤖 ✏️ FIX INDEX</span>
+      <div class="decision" onclick="event.stopPropagation()">${decisionHtml}</div>
+    </div>
+    <div class="rule-body">
+      <h4>The discrepancy</h4>
+      <p><strong>CLAUDE.md says:</strong> ${m.currentDecl}</p>
+      <p><strong>Actually:</strong> ${m.actualBehavior}</p>
+      <div class="agent-reason"><strong>🤖 Why fix:</strong> ${m.rationale}</div>
+      <textarea class="note" placeholder="Notes..." onchange="setNote('${m.id}', this.value)">${escapeHtml(s.note)}</textarea>
+    </div></div>`;
+}
+
+function renderNewRule(r) {
+  const s = state[r.id] || {};
+  const verdictIcon = r.recommend === 'STRONG' ? '✨' : '🤔';
+  const verdictClass = r.verdict === 'add' ? 'add' : 'maybe';
+  const decisionHtml = ['add', 'maybe', 'skip'].map(d => {
+    const checked = s.decision === d ? 'checked' : '';
+    const icon = { add: '✨ add', maybe: '🤔 maybe', skip: '⏭️ skip' }[d];
+    return `<label><input type="radio" name="d-${r.id}" value="${d}" ${checked} onchange="setDecision('${r.id}','${d}')"><span>${icon}</span></label>`;
+  }).join('');
+  const sourceTag = r.source === 'session' ? '<span class="rule-tag session">📜 session-history</span>' : '<span class="rule-tag spec">🗺️ codebase scan</span>';
+  return `<div class="rule" data-id="${r.id}" ${s.decision ? `data-decision="${s.decision}"` : ''} data-open="false">
+    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${r.id}')">
+      <span class="rule-name">${r.name}</span>
+      ${sourceTag}
+      <span class="rule-tag">${r.frequency}</span>
+      <span class="rule-tag size">${r.cost || ''}</span>
+      <span class="verdict-badge verdict-${verdictClass}">🤖 ${verdictIcon} ${r.recommend}</span>
+      <div class="decision" onclick="event.stopPropagation()">${decisionHtml}</div>
+    </div>
+    <div class="rule-body">
+      <h4>📖 Summary</h4><p>${r.contentSketch}</p>
+      <h4>📊 Loading mode</h4>
+      <p><strong>${r.loadingMode}</strong> — ${r.loadingMode.includes('always') ? 'no frontmatter, loads every session (per official spec)' : 'paths frontmatter, loads when matching files are read'}</p>
+      <h4>🔬 Evidence</h4><p>${r.evidence}</p>
+      <div class="agent-reason"><strong>🤖 Agent verdict — ${r.recommend}:</strong> ${r.agentReason}</div>
+      <details class="inner-detail">
+        <summary>📄 Full proposed file content (${r.name})</summary>
+        <div><pre class="code">${escapeHtml(r.proposedContent)}</pre></div>
+      </details>
+      <textarea class="note" placeholder="Notes / customisations..." onchange="setNote('${r.id}', this.value)">${escapeHtml(s.note)}</textarea>
+    </div></div>`;
+}
+
+function renderExtension(e) {
+  const s = state[e.id] || {};
+  const decisionHtml = ['add', 'skip'].map(d => {
+    const checked = s.decision === d ? 'checked' : '';
+    const icon = { add: '✨ add', skip: '⏭️ skip' }[d];
+    return `<label><input type="radio" name="d-${e.id}" value="${d}" ${checked} onchange="setDecision('${e.id}','${d}')"><span>${icon}</span></label>`;
+  }).join('');
+  return `<div class="rule" data-id="${e.id}" ${s.decision ? `data-decision="${s.decision}"` : ''} data-open="false">
+    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${e.id}')">
+      <span class="rule-name">${e.target} → ${e.what}</span>
+      <span class="verdict-badge verdict-add">🤖 ✨ ADD</span>
+      <div class="decision" onclick="event.stopPropagation()">${decisionHtml}</div>
+    </div>
+    <div class="rule-body">
+      <h4>📖 What to add</h4><p>${e.what}</p>
+      <h4>📁 Where in target file</h4><p>${e.whereInTarget}</p>
+      <h4>💡 Rationale</h4><p>${e.rationale}</p>
+      <h4>📄 Proposed snippet</h4>
+      <pre class="code">${escapeHtml(e.proposedSnippet)}</pre>
+      <textarea class="note" placeholder="Notes..." onchange="setNote('${e.id}', this.value)">${escapeHtml(s.note)}</textarea>
+    </div></div>`;
+}
+
+document.getElementById('existing-rules').innerHTML = existingRules.map(renderExistingRule).join('');
+document.getElementById('mismatches').innerHTML = mismatches.map(renderMismatch).join('');
+document.getElementById('new-rules').innerHTML = newRules.map(renderNewRule).join('');
+document.getElementById('extensions').innerHTML = extensions.map(renderExtension).join('');
+updateStats();
+</script>
+</body>
+</html>

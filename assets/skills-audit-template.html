@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<!--
+  ============================================================
+  Claude Skills Audit — HTML Template
+  ============================================================
+  This is a self-contained, single-file decision UI for auditing
+  installed plugins and standalone skills.
+
+  HOW TO USE THIS TEMPLATE:
+  1. Locate the AUDIT_DATA_INJECTION_POINT marker in the <script> tag below
+  2. Replace `[]` with a JavaScript array of audit items in this shape:
+
+     {
+       id: 'unique-string',                              // stable id (used for localStorage)
+       name: 'plugin-or-skill-name',                     // display name
+       type: 'plugin' | 'standalone',                    // what it is
+       verdict: 'keep' | 'delete' | 'maybe',             // agent's recommendation
+       invocations: '0 in 90d' | '220 in 90d 🔥' | etc., // human-readable usage
+       mostRecent: '2026-04-25 (today)' | 'Never' | etc.,
+       desc: 'What this plugin/skill does',
+       triggers: 'When it activates',
+       notes: 'Any caveats',
+       evidence: 'Concrete examples from session history',
+       agentReason: 'Why the agent recommends this verdict',
+       warn: 'overlap' | 'duplicate' | 'one-shot' | undefined  // optional warning tag
+     }
+
+  3. Save the populated file to the user's workspace as `skills-audit.html`
+  4. Tell the user to open it: `open ./skills-audit.html`
+
+  The template's CSS, layout, and interaction logic do not need per-user
+  customisation. Only the data array changes.
+  ============================================================
+-->
+<html lang="en-AU">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Skills Audit</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface-2: #334155;
+    --border: #475569;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --keep: #22c55e;
+    --delete: #ef4444;
+    --maybe: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 24px; margin: 0 0 4px 0; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg);
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  }
+  button {
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  button:hover { background: var(--border); }
+  button.primary { background: var(--accent); color: #0f172a; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  button.bot { background: #7c3aed; color: white; border-color: #7c3aed; font-weight: 600; }
+  button.bot:hover { filter: brightness(1.1); }
+  .stats { margin-left: auto; font-size: 13px; color: var(--muted); }
+  .stats .keep-c { color: var(--keep); font-weight: 600; }
+  .stats .delete-c { color: var(--delete); font-weight: 600; }
+  .stats .maybe-c { color: var(--maybe); font-weight: 600; }
+  details.section {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; margin-bottom: 12px;
+  }
+  details.section > summary {
+    padding: 12px 16px; cursor: pointer; font-weight: 600; font-size: 15px;
+    user-select: none; list-style: none;
+    display: flex; align-items: center; gap: 8px;
+  }
+  details.section > summary::-webkit-details-marker { display: none; }
+  details.section > summary::before {
+    content: '▶'; font-size: 10px;
+    transition: transform 0.15s; color: var(--muted);
+  }
+  details.section[open] > summary::before { transform: rotate(90deg); }
+  details.section .section-body { padding: 0 16px 12px 16px; }
+  .section-meta { margin-left: auto; font-size: 12px; color: var(--muted); font-weight: 400; }
+  .skill {
+    border: 1px solid var(--border); border-radius: 6px;
+    margin-bottom: 8px; background: var(--surface-2);
+  }
+  .skill[data-decision="keep"] { border-left: 4px solid var(--keep); }
+  .skill[data-decision="delete"] { border-left: 4px solid var(--delete); }
+  .skill[data-decision="maybe"] { border-left: 4px solid var(--maybe); }
+  .skill-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; cursor: pointer; flex-wrap: wrap;
+  }
+  .skill-name {
+    font-weight: 600; font-family: 'SF Mono', Menlo, monospace;
+    font-size: 13px; flex: 1; min-width: 200px;
+  }
+  .skill-tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--bg); color: var(--muted); }
+  .skill-tag.warn { background: #422006; color: #fbbf24; }
+  .skill-tag.dup { background: #450a0a; color: #fca5a5; }
+  .verdict-badge {
+    font-size: 11px; padding: 3px 8px; border-radius: 4px;
+    font-weight: 700; letter-spacing: 0.3px;
+  }
+  .verdict-keep { background: rgba(34, 197, 94, 0.2); color: var(--keep); border: 1px solid var(--keep); }
+  .verdict-delete { background: rgba(239, 68, 68, 0.2); color: var(--delete); border: 1px solid var(--delete); }
+  .verdict-maybe { background: rgba(245, 158, 11, 0.2); color: var(--maybe); border: 1px solid var(--maybe); }
+  .invocations { font-size: 11px; color: var(--muted); font-family: 'SF Mono', Menlo, monospace; }
+  .invocations.high { color: var(--keep); font-weight: 600; }
+  .invocations.zero { color: var(--delete); }
+  .decision { display: flex; gap: 4px; }
+  .decision label {
+    cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 12px;
+    background: var(--bg); border: 1px solid var(--border);
+    transition: all 0.1s;
+  }
+  .decision label:hover { background: var(--surface); }
+  .decision input { display: none; }
+  .decision label:has(input[value="keep"]:checked) { background: var(--keep); color: #052e16; border-color: var(--keep); }
+  .decision label:has(input[value="delete"]:checked) { background: var(--delete); color: #450a0a; border-color: var(--delete); }
+  .decision label:has(input[value="maybe"]:checked) { background: var(--maybe); color: #451a03; border-color: var(--maybe); }
+  .skill-body {
+    padding: 0 12px 12px 12px;
+    display: none;
+    border-top: 1px solid var(--border); margin-top: -1px;
+  }
+  .skill[data-open="true"] .skill-body { display: block; padding-top: 12px; }
+  .skill p { margin: 6px 0; color: var(--muted); font-size: 13px; }
+  .skill .label {
+    color: var(--text); font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    display: inline-block; min-width: 110px; vertical-align: top;
+  }
+  .agent-reason {
+    background: rgba(124, 58, 237, 0.1);
+    border-left: 3px solid #7c3aed;
+    padding: 8px 12px; margin: 8px 0;
+    border-radius: 4px; font-size: 13px;
+  }
+  .agent-reason strong { color: #c4b5fd; }
+  textarea.note {
+    width: 100%; min-height: 60px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 8px;
+    font-family: -apple-system, sans-serif; font-size: 13px;
+    resize: vertical; margin-top: 8px;
+  }
+  #output-section {
+    margin-top: 32px; padding: 16px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  }
+  #output {
+    width: 100%; min-height: 400px;
+    background: #020617; color: #cbd5e1;
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 12px;
+    font-family: 'SF Mono', Menlo, monospace; font-size: 12px;
+    resize: vertical;
+  }
+  .copy-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .copied { color: var(--keep); font-size: 12px; }
+  .filter-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter-row input[type="text"] {
+    flex: 1; min-width: 200px;
+    padding: 6px 10px;
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-size: 13px;
+  }
+  .skill.hidden { display: none; }
+  details.section.hidden { display: none; }
+  .legend {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    font-size: 12px; color: var(--muted);
+    margin-bottom: 12px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🎯 Claude Skills Audit</h1>
+  <div class="sub">Evidence-based decision tool — review every plugin &amp; standalone skill, mark Keep/Delete/Maybe, then generate Markdown to paste back into chat.</div>
+
+  <div class="toolbar">
+    <button class="bot" onclick="applyAgentVerdicts()">🤖 Apply all agent verdicts</button>
+    <button onclick="markAll('keep')">✅ All Keep</button>
+    <button onclick="markAll('delete')">🗑️ All Delete</button>
+    <button onclick="markAll('maybe')">🤔 All Maybe</button>
+    <button onclick="reset()">↺ Reset</button>
+    <button onclick="expandAll(true)">⬇️ Expand all</button>
+    <button onclick="expandAll(false)">⬆️ Collapse all</button>
+    <button onclick="filterUndecided()">🔎 Show undecided</button>
+    <button onclick="filterMismatch()">⚠️ Show mismatches</button>
+    <button class="primary" onclick="generateMarkdown()">📋 Generate Markdown</button>
+    <span class="stats" id="stats"></span>
+  </div>
+
+  <div class="filter-row" style="margin-bottom: 12px;">
+    <input type="text" id="search" placeholder="🔍 Filter by name, description, or evidence..." oninput="applyFilter()">
+  </div>
+
+  <div class="legend">
+    <span>🤖 = Agent verdict from session-history scan</span>
+    <span>📊 invocations = real tool calls in last 90 days (skill registry mentions filtered out)</span>
+    <span>⚠️ overlap / 🔁 duplicate / 🪦 one-shot</span>
+  </div>
+
+  <div id="catalog"></div>
+
+  <div id="output-section">
+    <h2 style="margin-top:0;">📋 Markdown output</h2>
+    <p style="color: var(--muted); margin: 0 0 8px 0; font-size: 13px;">Click <strong>Generate Markdown</strong> above, then copy this back to chat.</p>
+    <textarea id="output" placeholder="Markdown will appear here..."></textarea>
+    <div class="copy-row">
+      <button onclick="copyOutput()">📋 Copy to clipboard</button>
+      <span id="copied" class="copied" style="display:none;">✓ Copied!</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'claude-skills-audit-v1';
+
+// ============================================================
+// AUDIT_DATA_INJECTION_POINT
+// Replace the array below with the user's actual audit data.
+// Each item must follow the shape documented in the HTML comment block at the top of this file.
+// Items can be grouped via the "section" property if you want category headers.
+// ============================================================
+const data = /* AUDIT_DATA_INJECTION_POINT */ [
+  // Example placeholder — overwrite this entire array.
+  {
+    section: '📦 Example category',
+    items: [
+      {
+        id: 'p-example',
+        name: 'example-plugin',
+        type: 'plugin',
+        verdict: 'keep',
+        invocations: '12 in 90d',
+        mostRecent: '2026-04-25',
+        desc: 'Example item showing the data shape. Replace this entire array with real audit data.',
+        triggers: 'When the example fires',
+        notes: 'Optional caveats',
+        evidence: 'Concrete examples from session-history scan',
+        agentReason: 'Why the agent recommends this verdict in 1-2 sentences'
+      }
+    ]
+  }
+];
+
+let state = {};
+try { state = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch(e) { state = {}; }
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  updateStats();
+}
+function setDecision(id, decision) {
+  if (!state[id]) state[id] = {};
+  state[id].decision = decision;
+  saveState();
+  document.querySelector(`[data-id="${id}"]`).setAttribute('data-decision', decision);
+}
+function setNote(id, note) {
+  if (!state[id]) state[id] = {};
+  state[id].note = note;
+  saveState();
+}
+function toggleSkill(id) {
+  const el = document.querySelector(`[data-id="${id}"]`);
+  el.setAttribute('data-open', el.getAttribute('data-open') === 'true' ? 'false' : 'true');
+}
+function applyAgentVerdicts() {
+  if (!confirm('Apply every agent verdict as your decision? You can override individual ones afterward.')) return;
+  data.forEach(g => g.items.forEach(item => {
+    setDecision(item.id, item.verdict);
+    document.querySelector(`input[name="d-${item.id}"][value="${item.verdict}"]`).checked = true;
+  }));
+}
+function markAll(decision) {
+  if (!confirm(`Mark every item as ${decision.toUpperCase()}?`)) return;
+  data.forEach(g => g.items.forEach(item => {
+    setDecision(item.id, decision);
+    document.querySelector(`input[name="d-${item.id}"][value="${decision}"]`).checked = true;
+  }));
+}
+function reset() {
+  if (!confirm('Clear all decisions and notes?')) return;
+  state = {};
+  localStorage.removeItem(STORAGE_KEY);
+  document.querySelectorAll('input[type="radio"]').forEach(r => r.checked = false);
+  document.querySelectorAll('textarea.note').forEach(t => t.value = '');
+  document.querySelectorAll('.skill').forEach(s => s.removeAttribute('data-decision'));
+  updateStats();
+}
+function expandAll(open) {
+  document.querySelectorAll('details.section').forEach(d => d.open = open);
+  document.querySelectorAll('.skill').forEach(s => s.setAttribute('data-open', open));
+}
+let filterMode = 'all';
+function filterUndecided() { filterMode = filterMode === 'undecided' ? 'all' : 'undecided'; applyFilter(); }
+function filterMismatch() { filterMode = filterMode === 'mismatch' ? 'all' : 'mismatch'; applyFilter(); }
+
+function applyFilter() {
+  const q = document.getElementById('search').value.toLowerCase();
+  data.forEach(group => {
+    let shownInGroup = 0;
+    group.items.forEach(item => {
+      const el = document.querySelector(`[data-id="${item.id}"]`);
+      const matches = !q || (item.name + ' ' + item.desc + ' ' + (item.notes||'') + ' ' + (item.evidence||'') + ' ' + (item.agentReason||'')).toLowerCase().includes(q);
+      const decision = state[item.id]?.decision;
+      const undecidedOk = filterMode !== 'undecided' || !decision;
+      const mismatchOk = filterMode !== 'mismatch' || (decision && decision !== item.verdict);
+      const show = matches && undecidedOk && mismatchOk;
+      el.classList.toggle('hidden', !show);
+      if (show) shownInGroup++;
+    });
+    const sectionEl = document.getElementById(`section-${group.section}`);
+    if (sectionEl) sectionEl.classList.toggle('hidden', shownInGroup === 0);
+  });
+}
+
+function updateStats() {
+  let keep = 0, del = 0, maybe = 0, total = 0, agentMatch = 0, decided = 0;
+  data.forEach(g => g.items.forEach(item => {
+    total++;
+    const d = state[item.id]?.decision;
+    if (d === 'keep') keep++;
+    else if (d === 'delete') del++;
+    else if (d === 'maybe') maybe++;
+    if (d) decided++;
+    if (d && d === item.verdict) agentMatch++;
+  }));
+  const undecided = total - keep - del - maybe;
+  document.getElementById('stats').innerHTML = `
+    <span class="keep-c">✅ ${keep}</span> &nbsp;
+    <span class="delete-c">🗑️ ${del}</span> &nbsp;
+    <span class="maybe-c">🤔 ${maybe}</span> &nbsp;
+    <span style="color: var(--muted)">○ ${undecided}</span> &nbsp;
+    <span style="color: var(--muted)">/ ${total}</span> &nbsp;
+    <span style="color: #c4b5fd">🤖 ${agentMatch}/${decided||0} match agent</span>
+  `;
+}
+
+function generateMarkdown() {
+  let md = `# 🎯 Claude Skills Audit Results\n\n`;
+  md += `_Generated: ${new Date().toISOString().slice(0,16).replace('T', ' ')}_\n\n`;
+  let keep = [], del = [], maybe = [], undecided = [];
+  data.forEach(group => group.items.forEach(item => {
+    const s = state[item.id] || {};
+    const row = { ...item, note: s.note || '', section: group.section, finalDecision: s.decision };
+    if (s.decision === 'keep') keep.push(row);
+    else if (s.decision === 'delete') del.push(row);
+    else if (s.decision === 'maybe') maybe.push(row);
+    else undecided.push(row);
+  }));
+  md += `## 📊 Summary\n`;
+  md += `- ✅ **Keep**: ${keep.length}\n`;
+  md += `- 🗑️ **Delete**: ${del.length}\n`;
+  md += `- 🤔 **Maybe**: ${maybe.length}\n`;
+  md += `- ○ **Undecided**: ${undecided.length}\n\n`;
+  const mismatches = [...keep, ...del, ...maybe].filter(r => r.finalDecision && r.finalDecision !== r.verdict);
+  if (mismatches.length) {
+    md += `## ⚠️ Where I overrode the agent (${mismatches.length})\n\n`;
+    mismatches.forEach(r => {
+      md += `- **${r.name}** — agent said \`${r.verdict.toUpperCase()}\`, I chose \`${r.finalDecision.toUpperCase()}\`${r.note ? ' — ' + r.note : ''}\n`;
+    });
+    md += `\n`;
+  }
+  const writeGroup = (title, rows) => {
+    if (!rows.length) return '';
+    let out = `## ${title}\n\n`;
+    const bySection = {};
+    rows.forEach(r => { (bySection[r.section] ||= []).push(r); });
+    Object.entries(bySection).forEach(([sec, items]) => {
+      out += `### ${sec}\n`;
+      items.forEach(item => {
+        out += `- **${item.name}** (${item.type}, ${item.invocations})${item.note ? ' — ' + item.note : ''}\n`;
+      });
+      out += `\n`;
+    });
+    return out;
+  };
+  md += writeGroup('🗑️ Delete', del);
+  md += writeGroup('🤔 Maybe', maybe);
+  md += writeGroup('✅ Keep', keep);
+  if (undecided.length) md += writeGroup('○ Undecided', undecided);
+  document.getElementById('output').value = md;
+  document.getElementById('output-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+function copyOutput() {
+  const out = document.getElementById('output');
+  out.select();
+  document.execCommand('copy');
+  const c = document.getElementById('copied');
+  c.style.display = 'inline';
+  setTimeout(() => c.style.display = 'none', 2000);
+}
+
+function render() {
+  const root = document.getElementById('catalog');
+  data.forEach(group => {
+    const det = document.createElement('details');
+    det.className = 'section';
+    det.id = `section-${group.section}`;
+    det.open = true;
+    const sum = document.createElement('summary');
+    sum.innerHTML = `<span>${group.section}</span><span class="section-meta">${group.items.length} item${group.items.length===1?'':'s'}</span>`;
+    det.appendChild(sum);
+    const body = document.createElement('div');
+    body.className = 'section-body';
+    group.items.forEach(item => {
+      const s = state[item.id] || {};
+      const skill = document.createElement('div');
+      skill.className = 'skill';
+      skill.setAttribute('data-id', item.id);
+      if (s.decision) skill.setAttribute('data-decision', s.decision);
+      skill.setAttribute('data-open', 'false');
+      let warnTag = '';
+      if (item.warn === 'overlap') warnTag = '<span class="skill-tag warn">⚠️ overlap</span>';
+      if (item.warn === 'duplicate') warnTag = '<span class="skill-tag dup">🔁 duplicate</span>';
+      if (item.warn === 'one-shot') warnTag = '<span class="skill-tag warn">🪦 one-shot</span>';
+      const decisionHtml = ['keep', 'delete', 'maybe'].map(d => {
+        const checked = s.decision === d ? 'checked' : '';
+        const icon = d === 'keep' ? '✅' : d === 'delete' ? '🗑️' : '🤔';
+        return `<label><input type="radio" name="d-${item.id}" value="${d}" ${checked} onchange="setDecision('${item.id}','${d}')"><span>${icon} ${d}</span></label>`;
+      }).join('');
+      const verdictIcon = item.verdict === 'keep' ? '✅' : item.verdict === 'delete' ? '🗑️' : '🤔';
+      const invocClass = (item.invocations || '').includes('🔥') ? 'high' : (item.invocations || '').startsWith('0') ? 'zero' : '';
+      skill.innerHTML = `
+        <div class="skill-header" onclick="if(event.target.closest('.decision'))return; toggleSkill('${item.id}')">
+          <span class="skill-name">${item.name}</span>
+          <span class="skill-tag">${item.type}</span>
+          <span class="verdict-badge verdict-${item.verdict}">🤖 ${verdictIcon} ${item.verdict.toUpperCase()}</span>
+          <span class="invocations ${invocClass}">📊 ${item.invocations}</span>
+          ${warnTag}
+          <div class="decision" onclick="event.stopPropagation()">${decisionHtml}</div>
+        </div>
+        <div class="skill-body">
+          <p><span class="label">What:</span> ${item.desc}</p>
+          <p><span class="label">Triggers:</span> ${item.triggers || '—'}</p>
+          <p><span class="label">Most recent:</span> ${item.mostRecent}</p>
+          <p><span class="label">Evidence:</span> ${item.evidence || '—'}</p>
+          ${item.notes ? `<p><span class="label">Notes:</span> ${item.notes}</p>` : ''}
+          <div class="agent-reason"><strong>🤖 Agent verdict — ${item.verdict.toUpperCase()}:</strong> ${item.agentReason}</div>
+          <textarea class="note" placeholder="Your audit notes..." onchange="setNote('${item.id}', this.value)">${(s.note || '').replace(/</g,'&lt;')}</textarea>
+        </div>
+      `;
+      body.appendChild(skill);
+    });
+    det.appendChild(body);
+    root.appendChild(det);
+  });
+  updateStats();
+}
+
+render();
+</script>
+</body>
+</html>

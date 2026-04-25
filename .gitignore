@@ -1,0 +1,21 @@
+# Workspaces created by the skill at runtime (per-user audit outputs)
+# These are generated when the skill runs and shouldn't be committed.
+*-workspace/
+*-audit.html
+*-audit.html.bak
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+.idea/
+
+# Local environment
+.env
+.env.local
+*.local
+
+# Backup files (these are user-machine artefacts, not skill code)
+*.bak
