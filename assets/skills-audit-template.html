@@ -177,10 +177,25 @@
     background: var(--bg); border: 1px solid var(--border);
   }
   .sec-decision label:hover { background: var(--surface); }
-  .sec-decision input { display: none; }
+  /* sr-only pattern: keeps the radio in the tab order and reachable by screen
+     readers, but visually hidden behind its label. `display: none` would have
+     pulled it out of the focus ring entirely, making the keep/delete UI
+     keyboard-inaccessible. */
+  .sec-decision input, .decision input {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
   .sec-decision label:has(input[value="fix"]:checked)  { background: var(--keep); color: #052e16; border-color: var(--keep); }
   .sec-decision label:has(input[value="ack"]:checked)  { background: var(--maybe); color: #451a03; border-color: var(--maybe); }
   .sec-decision label:has(input[value="skip"]:checked) { background: var(--surface-2); color: var(--muted); }
+  /* Accessible focus ring on the visible label whenever the hidden radio takes
+     focus via keyboard. Pointer focus stays visually quiet. */
+  .sec-decision label:has(input:focus-visible),
+  .decision label:has(input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .decision { display: flex; gap: 4px; }
   .decision label {
     cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 12px;
@@ -188,7 +203,6 @@
     transition: all 0.1s;
   }
   .decision label:hover { background: var(--surface); }
-  .decision input { display: none; }
   .decision label:has(input[value="keep"]:checked) { background: var(--keep); color: #052e16; border-color: var(--keep); }
   .decision label:has(input[value="delete"]:checked) { background: var(--delete); color: #450a0a; border-color: var(--delete); }
   .decision label:has(input[value="maybe"]:checked) { background: var(--maybe); color: #451a03; border-color: var(--maybe); }
@@ -351,8 +365,30 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+// Persist decision state to localStorage. Wrapped in try/catch because
+// localStorage has a hard ~5MB ceiling per origin. A long-running audit
+// session that accumulates lots of free-text notes and agent reasons can hit
+// that cap. Without this guard, setItem throws QuotaExceededError, every
+// click becomes a silent no-op, and the user thinks decisions are being
+// saved when they aren't. We surface a one-time toast and keep the in-memory
+// state working so the user can still finish via "Generate Markdown" — the
+// markdown export is built from the in-memory `state` object, not from
+// localStorage, so the workflow degrades gracefully.
+let _storageWarned = false;
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (e) {
+    if (!_storageWarned) {
+      _storageWarned = true;
+      console.warn('claude-config-audit: localStorage save failed', e);
+      const banner = document.createElement('div');
+      banner.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9999;padding:12px 16px;background:#7f1d1d;color:#fee2e2;border-radius:6px;font-size:13px;max-width:360px;box-shadow:0 4px 12px rgba(0,0,0,0.3)';
+      banner.textContent = 'Heads up: browser storage is full so reload-survival is off. Your decisions still work in this tab — generate Markdown before closing the page.';
+      document.body.appendChild(banner);
+      setTimeout(() => banner.remove(), 10000);
+    }
+  }
   updateStats();
 }
 function setDecision(id, decision) {
@@ -634,7 +670,7 @@ function renderSecurityFindings() {
       ${f.evidence ? `<p><span class="label">Evidence:</span> <code>${escapeHtml(f.evidence)}</code></p>` : ''}
       ${f.why ? `<p><span class="label">Why it matters:</span> ${escapeHtml(f.why)}</p>` : ''}
       ${f.fix ? `<p><span class="label">Suggested fix:</span> ${escapeHtml(f.fix)}</p>` : ''}
-      <div class="sec-decision" onclick="event.stopPropagation()">${decisionHtml}</div>
+      <div class="sec-decision" role="radiogroup" aria-label="Security finding decision" onclick="event.stopPropagation()">${decisionHtml}</div>
       <textarea class="note" placeholder="Notes (e.g. why you skipped, what you fixed)..."
         onchange="setSecurityNote('${escapeHtml(safeId)}', this.value)">${escapeHtml(s.note)}</textarea>
     `;
@@ -691,7 +727,7 @@ function render() {
           <span class="skill-tag" title="Agent confidence in this verdict">${confidenceIcon} ${escapeHtml(confidence)}</span>
           <span class="invocations ${invocClass}">📊 ${escapeHtml(item.invocations)}</span>
           ${warnTag}
-          <div class="decision" onclick="event.stopPropagation()">${decisionHtml}</div>
+          <div class="decision" role="radiogroup" aria-label="Keep, delete, or defer this item" onclick="event.stopPropagation()">${decisionHtml}</div>
         </div>
         <div class="skill-body">
           <p><span class="label">What:</span> ${escapeHtml(item.desc)}</p>

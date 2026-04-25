@@ -9,7 +9,9 @@
 # convention (`a--b--c` → `a/b/c`) and `mv`s items back. Items that exist at
 # the destination are NOT overwritten — they're flagged for the user to decide.
 
-set -eu
+# pipefail catches errors mid-pipeline (e.g. `find ... | wc -l` where find
+# hits a permission error) so we don't continue on under bad assumptions.
+set -euo pipefail
 
 CLAUDE_DIR="${HOME}/.claude"
 
@@ -41,7 +43,12 @@ resolve_original() {
   local item="$1"
   local meta="${item}.meta.json"
   if [ -f "$meta" ]; then
-    python3 -c "import json; print(json.load(open('$meta'))['originalPath'])"
+    # Pass `$meta` through argv, never through string interpolation. A path
+    # containing a single quote (e.g. a maliciously named skill or a legitimate
+    # name with `'` in it) would otherwise either break the python parse or, in
+    # a worst-case crafted form, execute attacker-chosen Python from the
+    # quarantine session. argv-based passing is injection-immune by construction.
+    python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['originalPath'])" "$meta"
   else
     # Legacy fallback for sessions created before v2.3.
     local flat

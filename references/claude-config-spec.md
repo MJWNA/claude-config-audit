@@ -141,7 +141,14 @@ Each skill is a directory containing `SKILL.md` (with YAML frontmatter — `name
     └── SKILL.md
 ```
 
-To uninstall: `rm -rf ~/.claude/skills/<skill-name>/`. No manifest to update.
+To uninstall, quarantine the directory rather than `rm -rf`-ing it — the audit ships `scripts/quarantine.sh` for this. The destructive form would be:
+
+```bash
+SESSION=$(bash <skill-dir>/scripts/quarantine.sh init)
+bash <skill-dir>/scripts/quarantine.sh add "$SESSION" ~/.claude/skills/<skill-name>
+```
+
+No manifest edit needed — standalone skills register purely by directory presence under `~/.claude/skills/`. Removing the directory de-registers the skill. The quarantine path is reversible for 7 days via `restore.sh`; a direct `rm -rf` is not, and contradicts the audit's safety model.
 
 Note: an older path `~/.claude/plugins/installed/` is sometimes seen in docs or third-party guides. As of Claude Code 1.x, standalone skills live at `~/.claude/skills/`. Always verify the path before assuming.
 

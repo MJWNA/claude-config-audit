@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-This skill modifies user-scope Claude Code config and runs `rm -rf` on parts of the user's home directory. Security bugs are highest priority — report them privately, not via public issues.
+This skill modifies user-scope Claude Code config — moving plugin caches and skill directories into a 7-day quarantine, editing `installed_plugins.json`, and writing/editing rule files. Anything that could escape that scope, bypass the confirmation gate, or lose user data has high blast radius. Report security bugs privately, not via public issues.
 
 ## How to report
 
@@ -23,8 +23,9 @@ Specifically — these are security bugs:
 - A way for the skill to modify state outside `~/.claude/`
 - A way to bypass the confirmation gate before destructive operations (deletion executes without explicit "go")
 - A way to lose data that wasn't in the user's stated deletion plan
-- A way to corrupt `installed_plugins.json` such that the `.bak` recovery doesn't work
+- A way to corrupt `installed_plugins.json` such that the quarantine snapshot can't restore it
 - Path traversal in any of the scripts (e.g. crafted plugin names that escape the cache directory during cleanup)
+- Shell or code injection through quarantine session paths, agent output, or user-controlled filenames
 - Code execution from agent output (e.g. agent returns content that gets evaluated rather than displayed)
 
 These are NOT security bugs (file as regular bugs):

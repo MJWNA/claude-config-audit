@@ -4,7 +4,12 @@
 #
 # Cross-platform: macOS, Linux, WSL. POSIX-ish bash.
 
-set -u
+# Deliberately not -e here: the script's purpose is to *collect* every issue
+# in a single pass and report all of them. -e would abort on the first failed
+# check and the user would have to fix issues one-by-one across multiple runs.
+# pipefail still applies so a `find ... | wc -l` that hits a permission error
+# emits a real failure rather than a silent 0.
+set -uo pipefail
 
 CLAUDE_DIR="$HOME/.claude"
 PROJECT_DIR="$PWD/.claude"
