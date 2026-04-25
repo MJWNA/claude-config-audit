@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-7c3aed.svg)](https://docs.claude.com/en/docs/claude-code)
-[![Version](https://img.shields.io/badge/Version-2.3.1-22c55e.svg)]()
+[![Version](https://img.shields.io/badge/Version-2.3.2-22c55e.svg)]()
 [![CI](https://github.com/MJWNA/claude-config-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/MJWNA/claude-config-audit/actions/workflows/ci.yml)
 
 A Claude Code skill + plugin that scans your installation, dispatches parallel sub-agents to evaluate usage from your own session history, generates two interactive HTML decision tools, and safely executes the cleanup you choose — with quarantine-based reversibility and decision memory across runs.
@@ -346,7 +346,8 @@ claude-config-audit/
 ├── SECURITY.md                         # Vulnerability reporting policy
 ├── .gitignore
 ├── .claude-plugin/
-│   └── plugin.json                     # Plugin manifest (for plugin install path)
+│   ├── plugin.json                     # Plugin manifest (for plugin install path)
+│   └── marketplace.json                # Marketplace manifest for /plugin marketplace add
 ├── .github/
 │   ├── ISSUE_TEMPLATE/                 # Bug report + feature request templates
 │   └── workflows/
@@ -380,8 +381,12 @@ claude-config-audit/
 ├── tests/
 │   ├── test_analyze_session_history.py # Synthetic-projects fixture tests
 │   ├── test_audit_history.py           # Envelope parsing + diff tests
+│   ├── test_discover_recursive.sh      # Nested rules discovery smoke test
+│   ├── test_fence_wrap.py              # Markdown export fence regression tests
 │   ├── test_inject_audit_data.py       # Adversarial-payload injection tests
+│   ├── test_marketplace_manifest.py    # Marketplace/plugin manifest shape tests
 │   ├── test_quarantine_roundtrip.sh    # quarantine.sh + restore.sh roundtrip
+│   ├── test_verify_prerequisites.sh    # Environment preflight smoke test
 │   └── test_integration.sh             # Full pipeline against synthetic ~/.claude/
 ├── docs/
 │   ├── PHILOSOPHY.md                   # Why this skill exists
@@ -537,13 +542,13 @@ The skill is intentionally opinionated about workflow but flexible about content
 - **Description field in rule frontmatter** — per the official spec, rules don't support `description:` (that's a skills-only field). It's silently ignored. The audit catches this and tells you, but doesn't fix it automatically (cosmetic).
 - **CLAUDE.md "on demand" classification** — there's no "on demand" loading mode for rules. It's a mental model people often have, but it maps to "path-scoped" in the actual API. The audit reclassifies these.
 - **Agent invocation count = real signal, not perfect signal** — the agents count formal Skill tool calls + slash commands + Bash patterns. Custom invocation paths (e.g. a plugin you trigger via a hook rather than a slash command) may show as "0 invocations" even when actively used. Override the agent if you have private context — your override + reason gets saved for the next audit.
-- **Quarantine purge is manual** — until v2.x adds scheduled purge, you need to run `quarantine.sh purge` manually after the 7-day TTL elapses, or add it to your own cron.
+- **Quarantine purge is manual** — until a future release adds scheduled purge, you need to run `quarantine.sh purge` manually after the 7-day TTL elapses, or add it to your own cron.
 
 ---
 
 ## 📜 Credits
 
-Original pattern by [Ronnie Meagher (@MJWNA)](https://github.com/MJWNA). v2 extends the skill with quarantine-based reversibility, decision memory, security-pass agent, slash commands, and project-scope coverage. v2.1 ships the security-findings UI, deterministic invocation counts (no more agent-invented numbers), HTML data-injection hardening (`</script>` / U+2028 / U+2029 escaped before splice), explicit `${CLAUDE_PLUGIN_ROOT}` resolution, and CI. v2.2 fixes the spec-canonical plugin layout (so plain-language triggering works under plugin install, not just standalone), quarantine session uniqueness, the rules-workflow snapshot ordering, the nested-fence markdown export bug, restore-semantics accuracy, the subshell-counter pattern, and adds an integration smoke test.
+Original pattern by [Ronnie Meagher (@MJWNA)](https://github.com/MJWNA). v2 extends the skill with quarantine-based reversibility, decision memory, security-pass agent, slash commands, and project-scope coverage. v2.1 ships the security-findings UI, deterministic invocation counts (no more agent-invented numbers), HTML data-injection hardening (`</script>` / U+2028 / U+2029 escaped before splice), explicit `${CLAUDE_PLUGIN_ROOT}` resolution, and CI. v2.2 fixes the spec-canonical plugin layout (so plain-language triggering works under plugin install, not just standalone), quarantine session uniqueness, the rules-workflow snapshot ordering, the nested-fence markdown export bug, restore-semantics accuracy, the subshell-counter pattern, and adds an integration smoke test. v2.3.1 fixes marketplace validation, restore-sidecar shell safety, quarantine-name collisions, Windows guidance, and stale pre-quarantine documentation. v2.3.2 hardens the HTML decision controls for selector-sensitive IDs, exports rules security decisions, tightens restore/manifest output, and corrects decision-memory docs.
 
 Detailed philosophy: [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md).
 
