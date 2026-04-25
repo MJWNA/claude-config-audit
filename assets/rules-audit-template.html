@@ -367,13 +367,29 @@ function generateMarkdown() {
   // New rules — emit the full proposed file body so the markdown export is
   // self-contained. Without this, the execution step relies on Claude still
   // having the proposed content in scrollback, which breaks if the conversation
+  // Wrap arbitrary text in a markdown code fence, choosing a fence length
+  // longer than any run of backticks inside the content. CommonMark says the
+  // closing fence must be at least as long as the opening — so if the
+  // content contains ``` the outer fence needs to be ```` (4+) and so on.
+  // Without this, a proposed rule that documents code conventions (which
+  // legitimately contains code blocks) would corrupt the entire export.
+  const fenceWrap = (content, lang) => {
+    const text = String(content ?? '');
+    let longest = 0;
+    const re = /`+/g;
+    let m;
+    while ((m = re.exec(text)) !== null) longest = Math.max(longest, m[0].length);
+    const fence = '`'.repeat(Math.max(3, longest + 1));
+    return `${fence}${lang || ''}\n${text}\n${fence}`;
+  };
+
   // compacts between "user generates markdown" and "Claude writes the file".
   md += `\n## ✨ New rules to add\n`;
   decisionsBy(newRules, 'add').forEach(r => {
     md += `\n### ${r.name} (${r.loadingMode})\n`;
     md += `Source: ${r.source} — ${r.frequency}\n`;
     if (state[r.id]?.note) md += `My note: ${state[r.id].note}\n`;
-    md += `\n<details><summary>Full file content (paste into ~/.claude/rules/${r.name})</summary>\n\n\`\`\`markdown\n${r.proposedContent || '(proposedContent missing — re-run audit)'}\n\`\`\`\n\n</details>\n`;
+    md += `\n<details><summary>Full file content (paste into ~/.claude/rules/${r.name})</summary>\n\n${fenceWrap(r.proposedContent || '(proposedContent missing — re-run audit)', 'markdown')}\n\n</details>\n`;
   });
 
   // Extensions — emit the full snippet for the same reason.
@@ -383,7 +399,7 @@ function generateMarkdown() {
     md += `**What:** ${e.what}\n`;
     md += `**Where:** ${e.whereInTarget}\n`;
     if (state[e.id]?.note) md += `**My note:** ${state[e.id].note}\n`;
-    md += `\n\`\`\`markdown\n${e.proposedSnippet || '(proposedSnippet missing — re-run audit)'}\n\`\`\`\n`;
+    md += `\n${fenceWrap(e.proposedSnippet || '(proposedSnippet missing — re-run audit)', 'markdown')}\n`;
   });
 
   md += `\n## 🤔 Maybe / undecided\n`;

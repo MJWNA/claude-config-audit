@@ -4,6 +4,41 @@ All notable changes to claude-config-audit are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] — 2026-04-25
+
+Second-pass audit fixes from two independent LLM reviewers. The big one is plugin packaging — until this release, the SKILL.md at the repo root was only discovered by Claude Code under the standalone-skill install path. Plugin installs registered the slash commands but the skill itself (with all its trigger phrases for plain-language invocation) was invisible to plugin discovery, which expects `skills/<name>/SKILL.md`.
+
+### Added
+
+- **Plugin-canonical layout via symlinks** (`skills/claude-config-audit/`). Mirrors the root `SKILL.md`, `references/`, `scripts/`, and `assets/` so plugin install discovers the skill at the spec-required path while standalone install continues to read the canonical files at the repo root. Single source of truth, both install paths work. CI verifies the symlinks resolve on every push.
+- **Integration smoke test** (`tests/test_integration.sh`). Builds a synthetic `~/.claude/` with installed plugins, standalone skills, rule files, settings, and session JSONL containing real `Skill` tool_use blocks + slash-command tags + Bash invocations. Runs discovery → deterministic counts → audit-data synthesis → template injection → quarantine + restore in sequence and asserts the outputs are coherent. Catches gaps between modules that the per-module unit tests can't see.
+- **`plugin-layout` and `integration-smoke` CI jobs** (`.github/workflows/ci.yml`). The first asserts the symlinks resolve (canary for "someone clones without symlink support"); the second runs the end-to-end integration test on Ubuntu and macOS.
+- **Restore summary line** (`scripts/restore.sh`). Prints `Restored N items, M conflict(s) require manual resolution` after the loop. The counters work now because the loop runs in the parent shell via process substitution; previously they were inside a `find ... | while` subshell and any summary would have shown 0/0.
+
+### Changed
+
+- **Quarantine session uniqueness.** `quarantine.sh init` was second-resolution: two `init` calls within the same second produced the same path and `mkdir -p` succeeded for both, silently sharing state. Now uses `mktemp -d "$BASE/$ts-XXXXXX"` so every session gets a unique 6-character random suffix and the dir is created atomically.
+- **Rules workflow snapshot ordering.** `references/rules-audit-workflow.md` Phase 7 used to start with "write new rule files" — no quarantine snapshot before in-place edits. The slash command had the right ordering but a model following the detailed workflow would skip the safety rail. Phase 7 now opens with `quarantine.sh init` + `add ... --copy` for CLAUDE.md and every rule about to be edited, then proceeds with writes/edits.
+- **Markdown export uses dynamic fence length.** Rules audit exports `proposedContent` (full proposed rule files) wrapped in code fences. If a proposed rule's content itself contained triple backticks (legitimate for rules about coding conventions), the outer fence closed early and the export became malformed. New `fenceWrap()` helper picks a fence length one longer than the longest backtick run inside the content, defaulting to 3.
+- **`scripts/quarantine.sh purge` summary.** Same subshell-counter fix as `restore.sh` — prints `Purged N session(s)` after the loop.
+- **`scripts/verify-prerequisites.sh` precedence.** The `[ A ] || [ B ] && C` lines are functionally correct (left-associative, equal-precedence `||`/`&&`) but read ambiguously. Replaced with explicit `if [ A ] || [ B ]; then C; fi` blocks.
+- **`quarantine.sh add`'s `--copy` flag now documented.** The header usage block previously showed `add` with two positional args only; the `--copy` third-positional was undocumented. Now spelled out.
+- **README install instructions** use `/plugin marketplace add` + `/plugin install` (the modern path) instead of manual `installed_plugins.json` editing. Standalone skill install path retained for users who don't want slash commands or are on older Claude Code versions.
+- **README restore semantics** — previous wording oversold "one-line restore" without distinguishing `mv`'d items (deleted plugins/skills, which do reverse cleanly with one command) from `--copy`'d items (rule edits, where the original is still in place and `restore.sh` raises a CONFLICT prompt). Both flows are reversible; the docs now reflect that they're not the same flow.
+
+### Fixed
+
+- **Plugin-install plain-language triggering** — pre-2.2 plugin installs didn't surface `SKILL.md`, only the slash commands. The skill description with all its trigger phrases ("audit my Claude config", "spring clean Claude", etc.) was invisible. Now the plugin layout exposes SKILL.md at the canonical `skills/claude-config-audit/SKILL.md` path.
+- **Quarantine session collision under same-second `init` calls** — see [Changed].
+- **Unkept-promise gap between slash command and rules workflow** on snapshot ordering — see [Changed].
+- **Markdown export breaking on rules whose proposed content contains code fences** — see [Changed].
+- **Subshell-counter bug** that would have silently broken any `restore.sh` summary line a future maintainer added — see [Changed].
+
+### Audit history
+
+- v2.1.0 fixed the v2.0 unkept promises (rm -rf canonical sequence, security-findings UI, agent-invented counts, brittle plugin paths, no CI).
+- v2.2.0 (this release) fixes structural and accuracy gaps surfaced by two independent LLM-conducted external audits — the most important being plugin packaging. The first audit (a 95/100 generous review) missed it; the second (8.4/10 critical review) caught it, alongside quarantine timestamp uniqueness, the rules-workflow snapshot order, the nested-fence export bug, and the restore-semantics overclaim.
+
 ## [2.1.0] — 2026-04-25
 
 External-review fixes covering stale guidance, unkept v2 promises, and CI gaps. Six independent issues; each is fully addressed.
