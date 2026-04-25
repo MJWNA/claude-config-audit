@@ -1,0 +1,126 @@
+{
+  "skill_name": "claude-config-audit",
+  "description": "Trigger evals for the claude-config-audit skill. Half should-trigger (the user genuinely wants the audit workflow), half should-not-trigger (near-misses that share keywords but actually need a different tool). Realistic phrasings — the kinds of things a user actually types.",
+  "evals": [
+    {
+      "id": "trigger-1",
+      "should_trigger": true,
+      "prompt": "im looking at my plugin list in claude code and i can barely scroll through it anymore, i swear half of these i installed once and never used. can you help me clean this up?",
+      "expected_output": "skill triggers; runs prerequisite check + discovery; offers both audit halves"
+    },
+    {
+      "id": "trigger-2",
+      "should_trigger": true,
+      "prompt": "audit my ~/.claude setup",
+      "expected_output": "skill triggers"
+    },
+    {
+      "id": "trigger-3",
+      "should_trigger": true,
+      "prompt": "Every time I start Claude Code my system prompt is huge with all these skill descriptions for stuff I don't even use. Is there a way to figure out which ones I actually invoke vs. which are just noise? My ~/.claude/skills/ has like 40 things in it.",
+      "expected_output": "skill triggers; emphasises evidence from session history not just listing"
+    },
+    {
+      "id": "trigger-4",
+      "should_trigger": true,
+      "prompt": "spring clean my claude install, it's a mess",
+      "expected_output": "skill triggers"
+    },
+    {
+      "id": "trigger-5",
+      "should_trigger": true,
+      "prompt": "I have rules in ~/.claude/rules/ that I wrote 6 months ago and I can't remember which ones still apply. Can you go through them and tell me which to keep, which need updating, and whether there are gaps?",
+      "expected_output": "skill triggers; runs the rules half (skips skills half if user explicitly only wanted rules)"
+    },
+    {
+      "id": "trigger-6",
+      "should_trigger": true,
+      "prompt": "/audit-skills",
+      "expected_output": "slash command triggers the skills half directly"
+    },
+    {
+      "id": "trigger-7",
+      "should_trigger": true,
+      "prompt": "doctor my claude config, something feels bloated",
+      "expected_output": "skill triggers; doctor/bloated/config combo is a strong signal"
+    },
+    {
+      "id": "trigger-8",
+      "should_trigger": true,
+      "prompt": "I keep getting permission prompts for the same Bash commands over and over. Also my hooks list is getting unwieldy — can we go through ~/.claude/settings.json and figure out what's actually pulling weight?",
+      "expected_output": "skill triggers; security-pass agent particularly relevant for hooks/settings audit"
+    },
+    {
+      "id": "trigger-9",
+      "should_trigger": true,
+      "prompt": "before i clear context can you take a quick look at my installed plugins and tell me which ones to nuke?",
+      "expected_output": "skill triggers even with terse phrasing — 'installed plugins' + 'nuke' is unambiguous"
+    },
+    {
+      "id": "trigger-10",
+      "should_trigger": true,
+      "prompt": "i ran this audit thing 6 weeks ago and i want to do another pass — can it just show me what's changed since last time rather than re-asking everything?",
+      "expected_output": "skill triggers; uses audit-history.py diff to surface only deltas"
+    },
+    {
+      "id": "noise-1",
+      "should_trigger": false,
+      "prompt": "audit my AWS bill, it's gone up 30% this month and I want to know what's costing me",
+      "expected_output": "should NOT trigger — 'audit' keyword but completely different domain (cloud cost, not Claude Code config)"
+    },
+    {
+      "id": "noise-2",
+      "should_trigger": false,
+      "prompt": "review my plugins for the wordpress site I'm building, are these the right ones for an e-commerce setup?",
+      "expected_output": "should NOT trigger — 'plugins' keyword but wordpress, not Claude Code"
+    },
+    {
+      "id": "noise-3",
+      "should_trigger": false,
+      "prompt": "I want to install the github plugin in claude code, can you walk me through it?",
+      "expected_output": "should NOT trigger — install workflow, not audit. /plugin install is the right tool here."
+    },
+    {
+      "id": "noise-4",
+      "should_trigger": false,
+      "prompt": "clean up the rules in my .eslintrc, half of them are duplicating the prettier config and we keep getting conflicts",
+      "expected_output": "should NOT trigger — 'clean up rules' keyword but ESLint, not Claude Code rules"
+    },
+    {
+      "id": "noise-5",
+      "should_trigger": false,
+      "prompt": "delete the user account for jane@example.com from our database, she requested account closure last week",
+      "expected_output": "should NOT trigger — 'delete' keyword but a database operation against user data, completely unrelated"
+    },
+    {
+      "id": "noise-6",
+      "should_trigger": false,
+      "prompt": "spring clean my home directory, there are old downloads and screenshots from 2024 i never look at",
+      "expected_output": "should NOT trigger — 'spring clean' keyword but home dir cleanup, not Claude Code config. fd or find is the tool."
+    },
+    {
+      "id": "noise-7",
+      "should_trigger": false,
+      "prompt": "what skills are needed for a senior frontend engineer role? i'm updating my CV",
+      "expected_output": "should NOT trigger — 'skills' keyword but career advice, not Claude Code skills"
+    },
+    {
+      "id": "noise-8",
+      "should_trigger": false,
+      "prompt": "review the security of my claude code settings — are there any tokens leaking or hooks doing something dodgy?",
+      "expected_output": "EDGE CASE — could trigger because the security-pass agent does exactly this. Acceptable to trigger or to point at the security-pass agent specifically. Not a clean negative."
+    },
+    {
+      "id": "noise-9",
+      "should_trigger": false,
+      "prompt": "claude isn't loading my CLAUDE.md, can you help debug why",
+      "expected_output": "should NOT trigger — debugging a load failure isn't an audit. Suggest /InstructionsLoaded hook or settings.json check instead."
+    },
+    {
+      "id": "noise-10",
+      "should_trigger": false,
+      "prompt": "trim the leading whitespace from this code block, it's confusing the linter",
+      "expected_output": "should NOT trigger — 'trim' keyword but code formatting, completely unrelated"
+    }
+  ]
+}

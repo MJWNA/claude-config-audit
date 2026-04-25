@@ -35,16 +35,17 @@ Also read the user's `~/.claude/CLAUDE.md` to get the current rule index.
 
 If the user has project-scope rules, list them too (recurse `<project>/.claude/rules/` for each project they're working on). The codebase-pattern-scan agent needs these.
 
-## Phase 2 — Dispatch 4 parallel agents
+## Phase 2 — Dispatch parallel agents
 
-This half uses 4 distinctly-purposed agents (NOT 4 of the same kind). See `parallel-agent-patterns.md` for prompt templates.
+This half uses 4 distinctly-purposed agents (NOT 4 of the same kind), plus a 5th security-pass agent. See `parallel-agent-patterns.md` for the prompt templates.
 
 ```
 Dispatch in one message:
-  Agent 1 (existing rules audit) → compound-engineering:research:repo-research-analyst
-  Agent 2 (codebase pattern scan) → compound-engineering:research:repo-research-analyst
-  Agent 3 (official spec lookup) → compound-engineering:research:framework-docs-researcher
-  Agent 4 (session-history archaeology) → compound-engineering:research:session-historian
+  Agent 1 (existing rules audit)         → repo/codebase research subagent if available, else general-purpose
+  Agent 2 (codebase pattern scan)        → repo/codebase research subagent if available, else general-purpose
+  Agent 3 (official spec lookup)         → docs-lookup MCP if available, else general-purpose
+  Agent 4 (session-history archaeology)  → session-history research subagent if available, else general-purpose
+  Agent 5 (security pass)                → general-purpose (the prompt is self-contained)
 ```
 
 Each agent has a distinct deliverable:
@@ -53,8 +54,9 @@ Each agent has a distinct deliverable:
 - **Agent 2** returns: candidate new rules from cross-project pattern repetition (high bar: 3+ projects)
 - **Agent 3** returns: the official Claude Code spec for rule frontmatter, plus known parser bugs and community workarounds
 - **Agent 4** returns: candidate new rules from session-history patterns (repeated corrections / explanations / endorsements)
+- **Agent 5** returns: security findings on existing rules (stale skill references, dangerous patterns being encouraged, secrets that would leak if shared)
 
-If a session-historian or framework-docs-researcher subagent_type isn't available, fall back to `general-purpose` with the prompt verbatim.
+Discover available subagent types at runtime — never hardcode plugin-specific names. `general-purpose` is always available and works fine for any of these prompts; specialised subagents are an optimisation, not a requirement.
 
 ## Phase 3 — Synthesise
 

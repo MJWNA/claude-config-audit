@@ -1,6 +1,6 @@
 ---
 name: claude-config-audit
-description: Audit and clean up a Claude Code installation — installed plugins, standalone skills under ~/.claude/skills/, and user-scope rules under ~/.claude/rules/. Uses parallel sub-agents to scan the user's actual session history for usage evidence, generates two interactive HTML decision tools (skills audit + rules audit), then executes cleanup safely with backups. **Use this skill whenever the user mentions any of: "audit my Claude config", "audit my skills", "audit my plugins", "audit my rules", "clean up my Claude setup", "which skills should I delete", "spring clean Claude", "skills audit", "rules audit", "what plugins am I actually using", "trim my Claude install", "evaluate my Claude installation", "context bloat in Claude", "Claude config review", "claude code skill audit", "audit-claude-config", or any variation expressing the desire to evaluate, decide on, or clean up their Claude Code configuration.** Don't wait for the user to spell out the workflow — if they signal intent to evaluate or clean up their setup, this is the right skill.
+description: Audits and cleans up a Claude Code installation — installed plugins, standalone skills, user-scope rules, hooks, MCP servers, and project-scope config. Scans the user's actual session history for usage evidence, builds interactive HTML decision tools with confidence-tiered recommendations, then executes cleanup safely with quarantine-based reversibility and decision memory across runs. Use whenever the user wants to audit, prune, clean up, evaluate, trim, spring-clean, doctor, or review their Claude Code config; whenever ~/.claude/ feels bloated, slow, or context-heavy; whenever they want to know which skills, plugins, hooks, or rules they actually use; or whenever they want a fresh-config feeling without losing what's working. Don't wait for the user to spell out the workflow — if they signal intent to evaluate or clean up their setup, this is the right skill.
 ---
 
 # Claude Config Audit
@@ -51,26 +51,32 @@ If they want to do this autonomously without interaction, this skill is the wron
 ## High-level workflow
 
 ```
-[SKILLS AUDIT HALF]
-  1. Discover installed plugins + standalone skills
-  2. Dispatch ~5 parallel session-historian agents to scan usage
-  3. Build HTML from template + agent findings, save to user's workspace
-  4. User reviews in browser, generates markdown, pastes back to chat
-  5. Confirm the deletion plan
-  6. Execute: backup manifest, edit installed_plugins.json, rm cache dirs, rm skill dirs
-  7. Verify
+[SKILLS AUDIT HALF — also reachable via /audit-skills]
+  1. Run prerequisite check + discovery (covers user-scope and project-scope)
+  2. Read decision history (scripts/audit-history.py latest skills) — surface only deltas if a previous audit exists
+  3. Dispatch parallel agents: 4-5 bucket agents + 1 security-pass agent (for hooks, MCPs, settings)
+  4. Synthesise findings — each item gets verdict + confidence + reasonCodes
+  5. Build skills-audit.html from the template, save to user's workspace
+  6. User reviews in browser, generates markdown (with embedded decisions envelope), pastes back to chat
+  7. Confirm the deletion plan
+  8. Execute via quarantine: backup manifest, edit installed_plugins.json, MOVE cache dirs and skill dirs into quarantine session (not rm -rf)
+  9. scripts/audit-history.py save skills <markdown-path>
+  10. Verify + restart prompt + show how to restore from quarantine
 
-[RULES AUDIT HALF]
-  1. Discover existing rules + read each
-  2. Dispatch ~4 parallel agents (existing-rules audit, codebase pattern scan, official spec lookup, session-history archaeology)
-  3. Build HTML from template + agent findings + spec citations
-  4. User reviews, generates markdown, pastes back
-  5. Confirm the change plan
-  6. Execute: write new rule files, edit existing rules, restructure CLAUDE.md rule index
-  7. Verify and prompt the user to restart Claude Code
+[RULES AUDIT HALF — also reachable via /audit-rules]
+  1. Discover existing rules + read each (user-scope; --project for project-scope)
+  2. Read decision history for rules
+  3. Dispatch 5 parallel agents: existing-rules audit, codebase pattern scan, official spec lookup, session-history archaeology, security pass
+  4. Synthesise into 5 sections (existing, mismatches, new candidates with full proposedContent, extensions, refreshes) — each item gets confidence
+  5. Build rules-audit.html, save to user's workspace
+  6. User reviews, generates markdown (now self-contained — includes proposedContent), pastes back
+  7. Confirm the change plan
+  8. Snapshot CLAUDE.md and rules/ to quarantine first, then write new rules, edit existing, restructure CLAUDE.md
+  9. scripts/audit-history.py save rules <markdown-path>
+  10. Verify + restart prompt + smoke-test ideas + quarantine restore instructions
 ```
 
-Each half is a separate, recoverable transaction. The user can stop at any point.
+Each half is a separate, recoverable transaction. The user can stop at any point. Quarantine means even completed audits are reversible for 7 days.
 
 ## Execution playbooks (read these as you go)
 
@@ -113,38 +119,43 @@ open ./rules-audit.html
 
 ## Output format for the markdown report
 
-The HTML's "Generate Markdown" button produces this format. When the user pastes it back, you'll receive something like:
+The HTML's "Generate Markdown" button produces a structured markdown document that ends with a machine-readable JSON envelope inside an HTML comment:
 
 ```markdown
 # 🎯 Claude Skills Audit Results
-_Generated: 2026-04-25 09:12 AEST_
+_Generated: <ISO-timestamp>_
 
 ## 🗑️ Delete
-### 📦 Plugins — Core Dev Tooling
-- **pyright-lsp** (plugin, 0 in 90d)
-- **typescript-lsp** (plugin, 0 in 90d)
-...
+### 📦 Plugins — <bucket name>
+- **<item-name>** (plugin, <invocation-summary>)
+- **<item-name>** (plugin, <invocation-summary>)
 
 ## ✅ Keep
-...
+- **<item-name>** ...
 
-## ⚠️ Where I overrode the agent (3)
-- **frontend-design** — agent said MAYBE, I chose KEEP — used recently on AffiliateApp
-...
+## ⚠️ Where I overrode the agent (N)
+- **<item-name>** — agent said MAYBE, I chose KEEP — <user's reason>
+
+---
+<!-- claude-config-audit:decisions
+{ "auditType": "skills", "generatedAt": "...", "decisions": {...} }
+-->
 ```
 
-Parse the user's decisions from this markdown — don't re-ask for them. Then proceed to the execution phase.
+Parse the user's decisions from the markdown sections (don't re-ask). The JSON envelope at the end is for `scripts/audit-history.py save` — call it after execution so the next audit can surface only what's changed.
 
 ## Safety guarantees
 
-This skill modifies user-scope config that affects every Claude Code session on their machine. Before any destructive action you MUST follow `references/safety-protocol.md`. The non-negotiable parts:
+This skill modifies user-scope config that affects every Claude Code session on the user's machine. Before any destructive action you MUST follow `references/safety-protocol.md`. The non-negotiable parts:
 
-- **Always backup before modifying `installed_plugins.json`**: `cp ~/.claude/plugins/installed_plugins.json{,.bak}`
-- **Always show the exact command list before executing destructive operations**, even if the user has approved the plan
-- **Verify the path exists before `rm -rf`** — the difference between `~/.claude/skills/` and `~/.claude/plugins/installed/` has caught real users (and authors of this skill)
-- **For rule edits, read the file first** so the Edit tool has anchor strings to match against
-- **Never skip the manifest edit before deleting cache dirs** — orphaned cache dirs are recoverable (re-install the plugin), orphaned manifest entries cause harder-to-debug load errors
-- **After plugin changes, prompt for Claude Code restart** — the manifest is read at session start
+- **Quarantine, don't delete.** Before any `rm -rf`, use `scripts/quarantine.sh init` to create a quarantine session, then `add` to `mv` directories into it. The quarantine has a 7-day TTL and a one-line restore. This makes the audit feel reversible, which is the only reason users actually run it.
+- **Snapshot before editing.** Before any edit to `~/.claude/CLAUDE.md` or `~/.claude/rules/*.md`, copy the file into the same quarantine session (using `quarantine.sh add ... --copy`). Rule edits are otherwise irreversible without the user's own version control.
+- **Always show the exact command list before executing**, even if the user has approved the plan in the markdown. The cost of one extra round-trip is small; the cost of an unwanted change is large.
+- **Verify the path exists before any `mv` or `rm`**. `rm -rf` and `mv` against non-existent paths can silently succeed, masking the fact that the actual target wasn't touched.
+- **For file edits, read the file first** so the Edit tool's anchor matching is reliable.
+- **Edit `installed_plugins.json` before removing cache dirs.** Orphaned cache dirs are recoverable (re-install). Orphaned manifest entries cause confusing load errors at session start.
+- **After plugin changes, prompt for a Claude Code restart** — the manifest is read at session start.
+- **After execution, save the decisions** with `scripts/audit-history.py save <type> <markdown-path>` so the next audit can surface only deltas.
 
 ## Tone and pacing
 
@@ -170,17 +181,26 @@ This skill takes the user through a multi-stage decision process. They will be t
 
 ## Common follow-ups
 
-After the audit completes, the user often wants:
+After the audit completes, the user often wants one of:
 
-- **A `/schedule` cron** to re-run the audit quarterly
-- **A `claude-config-doctor` style health check** between audits
-- **Migration of project-scope rules to user-scope** (this is a separate workflow — point them to `references/rules-audit-workflow.md` "Promoting rules" section)
+- **A scheduled quarterly re-run** — offer once if there's a `/schedule`-style mechanism available, then move on.
+- **A health-check between audits** — light-touch ping that flags new zero-invocation items without the full agent dispatch.
+- **Migration of project-scope rules to user-scope** — separate workflow, see `references/rules-audit-workflow.md` "Promoting rules" section.
+- **Restore from quarantine** — if they had second thoughts on a deletion. `bash <skill-dir>/scripts/restore.sh <session-dir>` reverses everything cleanly.
 
-If they ask, offer once and move on. Don't pitch follow-ups they didn't signal interest in.
+Offer once, don't pitch follow-ups they didn't signal interest in.
+
+## Neighbour-skill awareness
+
+Many users will have other skills installed that overlap with parts of this audit's surface area — CLAUDE.md improvers, hook generators, permission optimisers, security scanners. Discover them at runtime by reading the user's installed plugin list (`~/.claude/plugins/installed_plugins.json`) and standalone skills directory (`~/.claude/skills/`), then comparing each one's description against the audit's findings.
+
+If you find an installed skill whose description overlaps with a specific finding in the audit (e.g. "improves CLAUDE.md", "manages permissions", "audits security"), surface it to the user as: *"You already have `<skill-name>` installed — it's better suited for this specific bit. Want to hand off to it?"* The decision is theirs.
+
+**Critical:** never hardcode neighbour-skill names. Every user's setup is different. Discover at runtime; suggest based on description matching; never assume a specific skill exists.
 
 ## Compatibility
 
-- Claude Code on macOS, Linux, Windows (WSL recommended). Native Windows works for read paths but `rm -rf` semantics differ.
-- Requires Bash and Python 3 (Python is used only by the `discover-config.sh` script for JSON parsing — replaceable with `jq` if available).
-- Tested with Claude Code 1.x.
-- HTML output works in any modern browser with localStorage. No internet access required to use the HTML.
+- Claude Code on macOS, Linux, and WSL. Native Windows works for read-only inspection but the destructive paths (`mv`, `rm -rf`) need a POSIX shell.
+- Bash 4+ and Python 3.8+ are required. Python is used for atomic JSON manipulation of `installed_plugins.json` and for the audit-history script.
+- HTML output works in any modern browser with localStorage. No internet access required.
+- All discovery scripts use portable `stat` fallbacks (BSD `-f` and GNU `-c` both supported).
