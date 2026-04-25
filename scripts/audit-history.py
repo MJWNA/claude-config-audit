@@ -2,8 +2,8 @@
 """Decision memory across audit runs.
 
 Persists the user's decisions from each audit so the next run can surface only
-deltas — items new since last audit, items whose evidence has changed,
-snoozed items now due — instead of asking about everything from zero.
+deltas — items new since last audit, items gone since last audit, and items
+whose evidence has changed — instead of asking about everything from zero.
 
 Storage: ~/.claude/.audit-history/<ISO-timestamp>.json. One file per audit.
 The newest file is the "previous audit" the next run reads.

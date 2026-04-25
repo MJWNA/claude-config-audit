@@ -365,6 +365,14 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+function domId(id) {
+  return encodeURIComponent(String(id ?? ''));
+}
+function rawId(id) {
+  try { return decodeURIComponent(String(id)); }
+  catch (e) { return String(id); }
+}
+
 // Persist decision state to localStorage. Wrapped in try/catch because
 // localStorage has a hard ~5MB ceiling per origin. A long-running audit
 // session that accumulates lots of free-text notes and agent reasons can hit
@@ -391,44 +399,54 @@ function saveState() {
   }
   updateStats();
 }
-function setDecision(id, decision) {
+function setDecision(encodedId, decision) {
+  const id = rawId(encodedId);
   if (!state[id]) state[id] = {};
   state[id].decision = decision;
   saveState();
-  document.querySelector(`[data-id="${id}"]`).setAttribute('data-decision', decision);
+  const el = document.querySelector(`[data-id="${encodedId}"]`);
+  if (el) el.setAttribute('data-decision', decision);
 }
-function setNote(id, note) {
+function setNote(encodedId, note) {
+  const id = rawId(encodedId);
   if (!state[id]) state[id] = {};
   state[id].note = note;
   saveState();
 }
-function setSecurityDecision(id, decision) {
+function setSecurityDecision(encodedId, decision) {
+  const id = rawId(encodedId);
   if (!state[id]) state[id] = {};
   state[id].decision = decision;
   saveState();
-  document.querySelector(`[data-sec-id="${id}"]`).setAttribute('data-decision', decision);
+  const el = document.querySelector(`[data-sec-id="${encodedId}"]`);
+  if (el) el.setAttribute('data-decision', decision);
 }
-function setSecurityNote(id, note) {
+function setSecurityNote(encodedId, note) {
+  const id = rawId(encodedId);
   if (!state[id]) state[id] = {};
   state[id].note = note;
   saveState();
 }
-function toggleSkill(id) {
-  const el = document.querySelector(`[data-id="${id}"]`);
-  el.setAttribute('data-open', el.getAttribute('data-open') === 'true' ? 'false' : 'true');
+function toggleSkill(encodedId) {
+  const el = document.querySelector(`[data-id="${encodedId}"]`);
+  if (el) el.setAttribute('data-open', el.getAttribute('data-open') === 'true' ? 'false' : 'true');
 }
 function applyAgentVerdicts() {
   if (!confirm('Apply every agent verdict as your decision? You can override individual ones afterward.')) return;
   data.forEach(g => g.items.forEach(item => {
-    setDecision(item.id, item.verdict);
-    document.querySelector(`input[name="d-${item.id}"][value="${item.verdict}"]`).checked = true;
+    const safeId = domId(item.id);
+    setDecision(safeId, item.verdict);
+    const radio = document.querySelector(`input[name="d-${safeId}"][value="${item.verdict}"]`);
+    if (radio) radio.checked = true;
   }));
 }
 function markAll(decision) {
   if (!confirm(`Mark every item as ${decision.toUpperCase()}?`)) return;
   data.forEach(g => g.items.forEach(item => {
-    setDecision(item.id, decision);
-    document.querySelector(`input[name="d-${item.id}"][value="${decision}"]`).checked = true;
+    const safeId = domId(item.id);
+    setDecision(safeId, decision);
+    const radio = document.querySelector(`input[name="d-${safeId}"][value="${decision}"]`);
+    if (radio) radio.checked = true;
   }));
 }
 function reset() {
@@ -438,6 +456,7 @@ function reset() {
   document.querySelectorAll('input[type="radio"]').forEach(r => r.checked = false);
   document.querySelectorAll('textarea.note').forEach(t => t.value = '');
   document.querySelectorAll('.skill').forEach(s => s.removeAttribute('data-decision'));
+  document.querySelectorAll('.security-finding').forEach(s => s.removeAttribute('data-decision'));
   updateStats();
 }
 function expandAll(open) {
@@ -453,13 +472,13 @@ function applyFilter() {
   data.forEach(group => {
     let shownInGroup = 0;
     group.items.forEach(item => {
-      const el = document.querySelector(`[data-id="${item.id}"]`);
+      const el = document.querySelector(`[data-id="${domId(item.id)}"]`);
       const matches = !q || (item.name + ' ' + item.desc + ' ' + (item.notes||'') + ' ' + (item.evidence||'') + ' ' + (item.agentReason||'')).toLowerCase().includes(q);
       const decision = state[item.id]?.decision;
       const undecidedOk = filterMode !== 'undecided' || !decision;
       const mismatchOk = filterMode !== 'mismatch' || (decision && decision !== item.verdict);
       const show = matches && undecidedOk && mismatchOk;
-      el.classList.toggle('hidden', !show);
+      if (el) el.classList.toggle('hidden', !show);
       if (show) shownInGroup++;
     });
     const sectionEl = document.getElementById(`section-${group.section}`);
@@ -647,7 +666,7 @@ function renderSecurityFindings() {
   body.className = 'section-body';
   sorted.forEach(f => {
     const s = state[f.id] || {};
-    const safeId = encodeURIComponent(f.id);
+    const safeId = domId(f.id);
     const sev = ['high', 'medium', 'low'].includes(f.severity) ? f.severity : 'low';
     const verdict = ['fix', 'ack', 'skip'].includes(f.verdict) ? f.verdict : 'ack';
     const verdictLabel = { fix: '🛠️ fix now', ack: '👁️ acknowledge', skip: '➖ skip' };
@@ -657,7 +676,7 @@ function renderSecurityFindings() {
     }).join('');
     const div = document.createElement('div');
     div.className = 'security-finding';
-    div.setAttribute('data-sec-id', f.id);
+    div.setAttribute('data-sec-id', safeId);
     div.setAttribute('data-severity', sev);
     if (s.decision) div.setAttribute('data-decision', s.decision);
     div.innerHTML = `
@@ -698,16 +717,16 @@ function render() {
       const s = state[item.id] || {};
       const skill = document.createElement('div');
       skill.className = 'skill';
-      skill.setAttribute('data-id', item.id);
+      const safeId = domId(item.id);
+      skill.setAttribute('data-id', safeId);
       if (s.decision) skill.setAttribute('data-decision', s.decision);
       skill.setAttribute('data-open', 'false');
       let warnTag = '';
       if (item.warn === 'overlap') warnTag = '<span class="skill-tag warn">⚠️ overlap</span>';
       if (item.warn === 'duplicate') warnTag = '<span class="skill-tag dup">🔁 duplicate</span>';
       if (item.warn === 'one-shot') warnTag = '<span class="skill-tag warn">🪦 one-shot</span>';
-      // item.id is generated by us (slugified) so safe in attributes; everything else
-      // — name, desc, evidence, etc. — comes from agent output and gets escaped.
-      const safeId = encodeURIComponent(item.id);
+      // Item IDs can be plugin keys like `name@marketplace`, so DOM selectors use
+      // a percent-encoded ID while audit history keeps the original raw value.
       const decisionHtml = ['keep', 'delete', 'maybe'].map(d => {
         const checked = s.decision === d ? 'checked' : '';
         const icon = d === 'keep' ? '✅' : d === 'delete' ? '🗑️' : '🤔';

@@ -334,28 +334,49 @@ function saveState() {
   }
   updateStats();
 }
-function setDecision(id, decision) { if (!state[id]) state[id] = {}; state[id].decision = decision; saveState();
-  document.querySelector(`[data-id="${id}"]`).setAttribute('data-decision', decision); }
-function setNote(id, note) { if (!state[id]) state[id] = {}; state[id].note = note; saveState(); }
-function setSecurityDecision(id, decision) {
+function domId(id) {
+  return encodeURIComponent(String(id ?? ''));
+}
+function rawId(id) {
+  try { return decodeURIComponent(String(id)); }
+  catch (e) { return String(id); }
+}
+function setDecision(encodedId, decision) {
+  const id = rawId(encodedId);
   if (!state[id]) state[id] = {};
   state[id].decision = decision;
   saveState();
-  const el = document.querySelector(`[data-sec-id="${id}"]`);
+  const el = document.querySelector(`[data-id="${encodedId}"]`);
   if (el) el.setAttribute('data-decision', decision);
 }
-function setSecurityNote(id, note) {
+function setNote(encodedId, note) {
+  const id = rawId(encodedId);
   if (!state[id]) state[id] = {};
   state[id].note = note;
   saveState();
 }
-function toggleRule(id) { const el = document.querySelector(`[data-id="${id}"]`);
-  el.setAttribute('data-open', el.getAttribute('data-open') === 'true' ? 'false' : 'true'); }
+function setSecurityDecision(encodedId, decision) {
+  const id = rawId(encodedId);
+  if (!state[id]) state[id] = {};
+  state[id].decision = decision;
+  saveState();
+  const el = document.querySelector(`[data-sec-id="${encodedId}"]`);
+  if (el) el.setAttribute('data-decision', decision);
+}
+function setSecurityNote(encodedId, note) {
+  const id = rawId(encodedId);
+  if (!state[id]) state[id] = {};
+  state[id].note = note;
+  saveState();
+}
+function toggleRule(encodedId) { const el = document.querySelector(`[data-id="${encodedId}"]`);
+  if (el) el.setAttribute('data-open', el.getAttribute('data-open') === 'true' ? 'false' : 'true'); }
 function applyAgentVerdicts() {
   if (!confirm('Apply all agent verdicts as your decisions?')) return;
   [...existingRules, ...mismatches, ...newRules, ...extensions].forEach(item => {
-    setDecision(item.id, item.verdict);
-    const radio = document.querySelector(`input[name="d-${item.id}"][value="${item.verdict}"]`);
+    const safeId = domId(item.id);
+    setDecision(safeId, item.verdict);
+    const radio = document.querySelector(`input[name="d-${safeId}"][value="${item.verdict}"]`);
     if (radio) radio.checked = true;
   });
 }
@@ -365,6 +386,7 @@ function reset() {
   document.querySelectorAll('input[type="radio"]').forEach(r => r.checked = false);
   document.querySelectorAll('textarea.note').forEach(t => t.value = '');
   document.querySelectorAll('.rule').forEach(s => s.removeAttribute('data-decision'));
+  document.querySelectorAll('.security-finding').forEach(s => s.removeAttribute('data-decision'));
   updateStats();
 }
 function expandAll(open) {
@@ -390,6 +412,32 @@ function updateStats() {
 function generateMarkdown() {
   let md = `# 📐 Claude Rules Audit Results\n\n_Generated: ${new Date().toISOString().slice(0,16).replace('T', ' ')}_\n\n`;
   const decisionsBy = (items, decision) => items.filter(i => state[i.id]?.decision === decision);
+  const secByDecision = { fix: [], ack: [], skip: [], pending: [] };
+  (securityFindings || []).forEach(f => {
+    const decision = (state[f.id] && state[f.id].decision) || f.verdict || 'ack';
+    const bucket = secByDecision[decision] || secByDecision.pending;
+    bucket.push({ ...f, note: state[f.id]?.note || '' });
+  });
+
+  if ((securityFindings || []).length) {
+    md += `## 🔐 Security findings\n\n`;
+    const sevTag = s => s === 'high' ? '🔥' : s === 'medium' ? '⚠️' : '·';
+    const writeSec = (title, rows) => {
+      if (!rows.length) return '';
+      let out = `### ${title} (${rows.length})\n\n`;
+      rows.forEach(r => {
+        out += `- ${sevTag(r.severity)} **${String(r.severity || 'low').toUpperCase()}** — ${r.title}`;
+        if (r.file) out += ` (\`${r.file}${r.line ? ':' + r.line : ''}\`)`;
+        if (r.note) out += ` — ${r.note}`;
+        out += `\n`;
+      });
+      return out + `\n`;
+    };
+    md += writeSec('🛠️ Fix now', secByDecision.fix);
+    md += writeSec('👁️ Acknowledged (not fixing yet)', secByDecision.ack);
+    md += writeSec('➖ Skipped (false positive or won\'t-fix)', secByDecision.skip);
+    md += `\n`;
+  }
 
   md += `## ✅ Existing rules — keep as-is\n`;
   decisionsBy(existingRules, 'keep').forEach(r => md += `- **${r.name}**${state[r.id]?.note ? ' — ' + state[r.id].note : ''}\n`);
@@ -447,10 +495,28 @@ function generateMarkdown() {
 
   // Embed a JSON envelope at the end so a follow-up audit can read the user's
   // decisions verbatim. Decision-memory script reads this from the export.
+  const auditItemIds = new Set([...existingRules, ...mismatches, ...newRules, ...extensions].map(i => i.id));
+  const securityDecisions = Object.fromEntries(
+    (securityFindings || []).map(f => {
+      const s = state[f.id] || {};
+      return [f.id, {
+        decision: s.decision || f.verdict || 'ack',
+        severity: f.severity,
+        category: f.category,
+        title: f.title,
+        agentVerdict: f.verdict,
+        note: s.note || ''
+      }];
+    })
+  );
   const envelope = {
     auditType: 'rules',
     generatedAt: new Date().toISOString(),
-    decisions: Object.fromEntries(Object.entries(state).filter(([_, v]) => v && v.decision))
+    summary: {
+      securityFindings: (securityFindings || []).length
+    },
+    decisions: Object.fromEntries(Object.entries(state).filter(([id, v]) => auditItemIds.has(id) && v && v.decision)),
+    securityDecisions
   };
   md += `\n---\n<!-- claude-config-audit:decisions\n${JSON.stringify(envelope, null, 2)}\n-->\n`;
 
@@ -491,7 +557,7 @@ function renderExistingRule(r) {
   const refreshValue = SAFE_VERDICT(refresh.value, ['low', 'medium', 'medium-high', 'high']);
   const refreshBadgeColor = { 'high': '#ef4444', 'medium-high': '#f97316', 'medium': '#f59e0b', 'low': '#64748b' }[refreshValue];
   const refreshIcon = { 'high': '🔥🔥🔥', 'medium-high': '🔥🔥', 'medium': '🔥', 'low': '·' }[refreshValue];
-  const safeId = encodeURIComponent(r.id);
+  const safeId = domId(r.id);
   const confidence = r.confidence || 'medium';
   const confidenceIcon = { high: '🟢', medium: '🟡', low: '🔴' }[confidence] || '🟡';
   const decisionHtml = ['keep', 'edit', 'refresh'].map(d => {
@@ -499,7 +565,7 @@ function renderExistingRule(r) {
     const icon = { keep: '✅ keep', edit: '✏️ edit', refresh: '🔥 refresh' }[d];
     return `<label><input type="radio" name="d-${escapeHtml(safeId)}" value="${d}" ${checked} onchange="setDecision('${escapeHtml(safeId)}','${d}')"><span>${icon}</span></label>`;
   }).join('');
-  return `<div class="rule" data-id="${escapeHtml(r.id)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
+  return `<div class="rule" data-id="${escapeHtml(safeId)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
     <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${escapeHtml(safeId)}')">
       <span class="rule-name">${escapeHtml(r.name)}</span>
       <span class="rule-tag">${matchIcon} ${escapeHtml(r.actualLoad)}</span>
@@ -534,13 +600,13 @@ function renderExistingRule(r) {
 
 function renderMismatch(m) {
   const s = state[m.id] || {};
-  const safeId = encodeURIComponent(m.id);
+  const safeId = domId(m.id);
   const decisionHtml = ['edit', 'skip'].map(d => {
     const checked = s.decision === d ? 'checked' : '';
     const icon = { edit: '✏️ fix index', skip: '⏭️ leave it' }[d];
     return `<label><input type="radio" name="d-${escapeHtml(safeId)}" value="${d}" ${checked} onchange="setDecision('${escapeHtml(safeId)}','${d}')"><span>${icon}</span></label>`;
   }).join('');
-  return `<div class="rule" data-id="${escapeHtml(m.id)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
+  return `<div class="rule" data-id="${escapeHtml(safeId)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
     <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${escapeHtml(safeId)}')">
       <span class="rule-name">${escapeHtml(m.name)}</span>
       <span class="rule-tag warn">declared: ${escapeHtml(m.currentDecl)}</span>
@@ -559,7 +625,7 @@ function renderMismatch(m) {
 
 function renderNewRule(r) {
   const s = state[r.id] || {};
-  const safeId = encodeURIComponent(r.id);
+  const safeId = domId(r.id);
   const verdictIcon = r.recommend === 'STRONG' ? '✨' : '🤔';
   const verdictClass = r.verdict === 'add' ? 'add' : 'maybe';
   const decisionHtml = ['add', 'maybe', 'skip'].map(d => {
@@ -568,7 +634,7 @@ function renderNewRule(r) {
     return `<label><input type="radio" name="d-${escapeHtml(safeId)}" value="${d}" ${checked} onchange="setDecision('${escapeHtml(safeId)}','${d}')"><span>${icon}</span></label>`;
   }).join('');
   const sourceTag = r.source === 'session' ? '<span class="rule-tag session">📜 session-history</span>' : '<span class="rule-tag spec">🗺️ codebase scan</span>';
-  return `<div class="rule" data-id="${escapeHtml(r.id)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
+  return `<div class="rule" data-id="${escapeHtml(safeId)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
     <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${escapeHtml(safeId)}')">
       <span class="rule-name">${escapeHtml(r.name)}</span>
       ${sourceTag}
@@ -593,13 +659,13 @@ function renderNewRule(r) {
 
 function renderExtension(e) {
   const s = state[e.id] || {};
-  const safeId = encodeURIComponent(e.id);
+  const safeId = domId(e.id);
   const decisionHtml = ['add', 'skip'].map(d => {
     const checked = s.decision === d ? 'checked' : '';
     const icon = { add: '✨ add', skip: '⏭️ skip' }[d];
     return `<label><input type="radio" name="d-${escapeHtml(safeId)}" value="${d}" ${checked} onchange="setDecision('${escapeHtml(safeId)}','${d}')"><span>${icon}</span></label>`;
   }).join('');
-  return `<div class="rule" data-id="${escapeHtml(e.id)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
+  return `<div class="rule" data-id="${escapeHtml(safeId)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
     <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${escapeHtml(safeId)}')">
       <span class="rule-name">${escapeHtml(e.target)} → ${escapeHtml(e.what)}</span>
       <span class="verdict-badge verdict-add">🤖 ✨ ADD</span>
@@ -632,7 +698,7 @@ function renderSecurityFindings() {
     (order[a.severity] ?? 3) - (order[b.severity] ?? 3));
   host.innerHTML = sorted.map(f => {
     const s = state[f.id] || {};
-    const safeId = encodeURIComponent(f.id);
+    const safeId = domId(f.id);
     const sev = ['high', 'medium', 'low'].includes(f.severity) ? f.severity : 'low';
     const verdict = ['fix', 'ack', 'skip'].includes(f.verdict) ? f.verdict : 'ack';
     const labels = { fix: '🛠️ fix now', ack: '👁️ acknowledge', skip: '➖ skip' };
@@ -640,7 +706,7 @@ function renderSecurityFindings() {
       const checked = (s.decision || verdict) === d ? 'checked' : '';
       return `<label><input type="radio" name="sec-${escapeHtml(safeId)}" value="${d}" ${checked} onchange="setSecurityDecision('${escapeHtml(safeId)}','${d}')"><span>${labels[d]}</span></label>`;
     }).join('');
-    return `<div class="security-finding" data-sec-id="${escapeHtml(f.id)}" data-severity="${sev}"${s.decision ? ` data-decision="${s.decision}"` : ''}>
+    return `<div class="security-finding" data-sec-id="${escapeHtml(safeId)}" data-severity="${sev}"${s.decision ? ` data-decision="${escapeHtml(s.decision)}"` : ''}>
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
         <span class="severity-badge severity-${sev}">${sev.toUpperCase()}</span>
         ${f.category ? `<span class="skill-tag">${escapeHtml(f.category)}</span>` : ''}

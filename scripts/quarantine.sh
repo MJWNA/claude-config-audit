@@ -140,13 +140,23 @@ case "$cmd" in
       printf 'Created: %s\n\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')"
       printf 'TTL: %s days (auto-purge with `quarantine.sh purge`)\n\n' "$TTL_DAYS"
       printf '## Items in this quarantine\n\n'
-      find "$session" -mindepth 1 -maxdepth 1 -not -name 'MANIFEST.md' -print | while IFS= read -r p; do
-        # Reverse the flatten: turn `plugins--cache--name` back into the original-ish path.
-        # This is informational, not authoritative — the MANIFEST text is for humans.
+      find "$session" -mindepth 1 -maxdepth 1 -not -name 'MANIFEST.md' -not -name '*.meta.json' -print | while IFS= read -r p; do
         flat=$(basename "$p")
-        original=$(printf '%s' "$flat" | sed 's|--|/|g')
-        printf -- '- %s\n  - **was at:** `~/.claude/%s`\n  - **size:** %s\n' \
-          "$flat" "$original" "$(du -sh "$p" 2>/dev/null | awk '{print $1}')"
+        original=""
+        mode="unknown"
+        if [ -f "${p}.meta.json" ]; then
+          original=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('originalPath',''))" "${p}.meta.json" 2>/dev/null || true)
+          mode=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('mode','unknown'))" "${p}.meta.json" 2>/dev/null || printf 'unknown')
+        fi
+        if [ -n "$original" ]; then
+          rel="${original#$CLAUDE_DIR/}"
+        else
+          # Legacy fallback for pre-sidecar sessions: reverse the flatten for
+          # human display only. Restore uses sidecars when available.
+          rel=$(printf '%s' "$flat" | sed 's|--|/|g')
+        fi
+        printf -- '- %s\n  - **was at:** `~/.claude/%s`\n  - **mode:** %s\n  - **size:** %s\n' \
+          "$flat" "$rel" "$mode" "$(du -sh "$p" 2>/dev/null | awk '{print $1}')"
       done
       printf '\n## How to restore everything\n\n'
       printf '```bash\n'

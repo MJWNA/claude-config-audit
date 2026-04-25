@@ -40,7 +40,7 @@ When you run this skill, by the end of the session you have:
 | 📝 **Self-contained markdown summary** | Every decision plus full proposed content for new rules — paste back to chat, no scrollback dependency |
 | 🧹 **A cleaner installation** | Items you don't use moved to quarantine, rules updated, CLAUDE.md restructured |
 | 💾 **Reversible quarantine** | Every "deletion" is a `mv` to a timestamped session (one-line restore for these); rule edits get a copy-snapshot in the same session so you can roll back via a guided conflict prompt. 7-day TTL. |
-| 📚 **Decision memory** | Next audit shows only deltas — items new since last time, items where evidence changed, snoozed items now due |
+| 📚 **Decision memory** | Next audit highlights deltas — items new since last time, items gone since last time, and items where evidence changed |
 | 🔐 **Security pass** | Dedicated agent flags hooks calling network commands, hardcoded tokens, suspicious MCP endpoints, over-broad allowed-tools |
 | 🔄 **Restart prompt** | With smoke-test ideas for new rules and quarantine-restore instructions if anything's wrong |
 
@@ -421,13 +421,13 @@ The agents need session signal to give meaningful verdicts. If your `~/.claude/p
 
 ### How does decision memory work?
 
-After every audit, your decisions (with reasons for any agent overrides) are saved to `~/.claude/.audit-history/<timestamp>--<half>.json`. The next audit reads the most recent file and surfaces only:
+After every audit, your decisions (with reasons for any agent overrides) are saved to `~/.claude/.audit-history/<timestamp>--<half>.json`. The next audit reads the most recent file and highlights:
 
 - **New items** — installed since last audit
+- **Gone items** — present in the previous audit but no longer installed
 - **Changed items** — where invocation evidence has shifted (e.g. a plugin you'd marked "Maybe / 0 calls" now has 5 calls)
-- **Snoozed items now due** — anything you marked "ask me again in 30 days"
 
-Stable items (kept since last audit, evidence unchanged) are rolled up under a collapsed section so you don't re-walk them. Subsequent audits become 10-15 min instead of 60.
+Stable items (kept since last audit, evidence unchanged) can be rolled up under a collapsed section so you don't re-walk them. Subsequent audits become 10-15 min instead of 60.
 
 ### Can I customise the categories or HTML?
 

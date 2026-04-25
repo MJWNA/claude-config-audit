@@ -74,14 +74,15 @@ while IFS= read -r p; do
 
   if [ -e "$dest" ]; then
     printf 'CONFLICT: %s already exists. Resolve manually:\n' "$dest"
-    printf '  - keep current:  rm -rf %s %s.meta.json\n' "$p" "$p"
-    printf '  - restore old:   rm -rf %s && mv %s %s && rm -f %s.meta.json\n' "$dest" "$p" "$dest" "$p"
+    printf '  - keep current:  rm -rf %q %q\n' "$p" "${p}.meta.json"
+    printf '  - restore old:   rm -rf %q && mv %q %q && rm -f %q\n' "$dest" "$p" "$dest" "${p}.meta.json"
     conflicts=$((conflicts + 1))
     continue
   fi
 
   if $dry_run; then
     printf 'would restore: %s -> %s\n' "$p" "$dest"
+    restored=$((restored + 1))
   else
     mkdir -p "$(dirname "$dest")"
     mv "$p" "$dest"

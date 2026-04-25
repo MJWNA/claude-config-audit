@@ -51,7 +51,7 @@ class TestCounting(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self.now = datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc)
+        self.now = datetime.now(tz=timezone.utc)
 
     def test_counts_skill_tool_calls(self):
         session = self.tmp / "proj-A" / "session1.jsonl"

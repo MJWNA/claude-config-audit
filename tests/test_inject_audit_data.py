@@ -261,6 +261,21 @@ class TestRealTemplates(unittest.TestCase):
         html = out.read_text()
         self._assert_no_breakout(html)
         self.assertIn("renderSecurityFindings", html)
+        self.assertIn("## 🔐 Security findings", html)
+        self.assertIn("securityDecisions", html)
+
+    def test_templates_use_dom_safe_ids_but_preserve_state_ids(self):
+        # Plugin/rule IDs often contain characters such as `@`, `/`, and spaces.
+        # The browser DOM uses percent-encoded IDs for selectors, while exported
+        # audit history keeps the original raw IDs as state keys.
+        for template in (
+            REPO_ROOT / "assets" / "skills-audit-template.html",
+            REPO_ROOT / "assets" / "rules-audit-template.html",
+        ):
+            html = template.read_text(encoding="utf-8")
+            self.assertIn("function domId", html)
+            self.assertIn("function rawId", html)
+            self.assertIn("const id = rawId(encodedId)", html)
 
 
 if __name__ == "__main__":

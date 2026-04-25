@@ -39,6 +39,12 @@ bash "$REPO_ROOT/scripts/quarantine.sh" add "$SESSION" "$HOME/.claude/plugins/ca
 echo "4. write manifest"
 bash "$REPO_ROOT/scripts/quarantine.sh" manifest "$SESSION" >/dev/null
 [ -f "$SESSION/MANIFEST.md" ] || { echo "FAIL: manifest missing"; exit 1; }
+! grep -q '\.meta\.json' "$SESSION/MANIFEST.md" || { echo "FAIL: manifest lists meta sidecars as restorable items"; exit 1; }
+
+echo "4b. dry-run restore summary counts restorable items"
+DRY_RUN_OUT=$(bash "$REPO_ROOT/scripts/restore.sh" "$SESSION" --dry-run)
+echo "$DRY_RUN_OUT" | grep -q "Dry run: would restore 2 items" || \
+  { echo "FAIL: dry-run summary should count 2 restorable items; got: $DRY_RUN_OUT"; exit 1; }
 
 echo "5. boundary check — quarantine.sh refuses paths outside ~/.claude/"
 # /etc/hosts exists on every platform we care about (macOS, Linux, WSL).

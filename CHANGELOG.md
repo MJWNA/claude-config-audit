@@ -4,6 +4,23 @@ All notable changes to claude-config-audit are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **HTML decision controls now work with plugin/rule IDs containing `@`, `/`, spaces, or other selector-sensitive characters.** The templates now use percent-encoded DOM IDs for selectors while preserving the original raw IDs in localStorage, markdown exports, and audit-history envelopes.
+- **Rules security findings are now included in the generated markdown export and machine-readable envelope.** This brings the rules template in line with the skills template and the README promise that fix/ack/skip security choices paste back alongside regular audit decisions.
+- **Restore dry-run summaries now count restorable items.** `restore.sh --dry-run` increments the same summary counter as real restores, so the final line no longer says it would restore 0 items after listing candidates.
+- **Restore conflict instructions quote paths safely.** Conflict-resolution commands now use shell-escaped paths so filenames with spaces, quotes, or other shell-sensitive characters don't produce unsafe copy-paste guidance.
+- **Quarantine manifests no longer list `.meta.json` sidecars as restorable items.** The manifest now reads sidecars to show the exact original path and copy/move mode for each real item.
+- **Analyzer tests no longer age into failure.** Session-history tests now build timestamps relative to the real current time instead of a fixed 2026 fixture date.
+- **Decision-memory docs no longer claim snooze support.** Documentation now reflects the implemented diff behaviour: new, gone, and invocation-changed items.
+- **Reset buttons clear security-finding visual state as well as regular item state.**
+
+### Added
+
+- Regression coverage for DOM-safe ID helpers, rules security export presence, restore dry-run counts, and quarantine manifest sidecar filtering.
+
 ## [2.3.1] — 2026-04-26
 
 Patch release driven by two independent post-2.3 audits (Audit E scoring 8.6/10, Audit F scoring 7.7/10). Closes one release-blocker (the marketplace manifest the v2.3 install path depended on never actually validated), one shell-injection vector in `restore.sh` that contradicted the safety thesis, and the long tail of doc-drift items where v1's `rm -rf`/`.bak` recovery story still appeared in user-facing files.
