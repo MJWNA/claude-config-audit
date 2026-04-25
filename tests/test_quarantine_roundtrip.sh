@@ -91,7 +91,8 @@ echo "11. v2.3 fix — init produces unique paths in same second"
 # state. v2.2 added mktemp -d -XXXXXX to fix this. Regression test asserts
 # 5 rapid init calls produce 5 distinct paths.
 PATHS=()
-for i in 1 2 3 4 5; do
+# Loop body doesn't reference the index; using `_` quiets shellcheck SC2034.
+for _ in 1 2 3 4 5; do
   PATHS+=("$(bash "$REPO_ROOT/scripts/quarantine.sh" init)")
 done
 UNIQUE_COUNT=$(printf '%s\n' "${PATHS[@]}" | sort -u | wc -l | tr -d ' ')
