@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-7c3aed.svg)](https://docs.claude.com/en/docs/claude-code)
-[![Version](https://img.shields.io/badge/Version-2.1.0-22c55e.svg)]()
+[![Version](https://img.shields.io/badge/Version-2.2.0-22c55e.svg)]()
 [![CI](https://github.com/MJWNA/claude-config-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/MJWNA/claude-config-audit/actions/workflows/ci.yml)
 
 A Claude Code skill + plugin that scans your installation, dispatches parallel sub-agents to evaluate usage from your own session history, generates two interactive HTML decision tools, and safely executes the cleanup you choose — with quarantine-based reversibility and decision memory across runs.
@@ -23,7 +23,7 @@ A few months later you've got dozens of plugins and skills and rules, and you ca
 
 **This skill fixes that — properly, with evidence, and reversibly.**
 
-It looks at your actual session history (the `.jsonl` files Claude Code writes for every session) and counts which plugins, skills, hooks, and rules you've actually invoked in the last 90 days. Then it presents the findings in a clean interactive UI so you can sweep through items in 30 minutes instead of 3 hours. Deletions go to a quarantine for 7 days — fully reversible until you're sure.
+It looks at your actual session history (the `.jsonl` files Claude Code writes for every session) and counts which plugins, skills, hooks, and rules you've actually invoked in the last 90 days. Then it presents the findings in a clean interactive UI so you can sweep through items in 30 minutes instead of 3 hours. Deletions go to a quarantine for 7 days — `mv`'d items reverse with a single command; rule edits use copy-snapshots that surface a conflict prompt on restore so you can decide which version to keep.
 
 After: your install is leaner. Sessions start faster. Your slash command list is the things you actually use. Your `~/.claude/rules/` is the rules that genuinely prevent mistakes, not the ones you forgot you wrote.
 
@@ -39,7 +39,7 @@ When you run this skill, by the end of the session you have:
 | 🎨 **Interactive HTML decision tools** | Saved to your workspace with your actual config pre-loaded — review, decide, export |
 | 📝 **Self-contained markdown summary** | Every decision plus full proposed content for new rules — paste back to chat, no scrollback dependency |
 | 🧹 **A cleaner installation** | Items you don't use moved to quarantine, rules updated, CLAUDE.md restructured |
-| 💾 **Reversible quarantine** | Every "deletion" is a `mv` to a timestamped session, 7-day TTL, one-line restore |
+| 💾 **Reversible quarantine** | Every "deletion" is a `mv` to a timestamped session (one-line restore for these); rule edits get a copy-snapshot in the same session so you can roll back via a guided conflict prompt. 7-day TTL. |
 | 📚 **Decision memory** | Next audit shows only deltas — items new since last time, items where evidence changed, snoozed items now due |
 | 🔐 **Security pass** | Dedicated agent flags hooks calling network commands, hardcoded tokens, suspicious MCP endpoints, over-broad allowed-tools |
 | 🔄 **Restart prompt** | With smoke-test ideas for new rules and quarantine-restore instructions if anything's wrong |
@@ -50,11 +50,20 @@ When you run this skill, by the end of the session you have:
 
 ### 1. Install
 
-As a plugin (recommended — gets you the slash commands):
+**As a plugin (recommended — gets you `/audit-skills` and `/audit-rules` slash commands plus plain-language triggering):**
+
+Add the repository as a Claude Code marketplace, then install:
+
+```text
+/plugin marketplace add MJWNA/claude-config-audit
+/plugin install claude-config-audit@MJWNA
+```
+
+Or from the CLI:
 
 ```bash
-git clone https://github.com/MJWNA/claude-config-audit.git ~/.claude/plugins/cache/local/claude-config-audit/2.1.0
-# Then register in ~/.claude/plugins/installed_plugins.json
+claude plugin marketplace add MJWNA/claude-config-audit
+claude plugin install claude-config-audit@MJWNA
 ```
 
 To test a local checkout without registering it as a permanent install:
@@ -63,13 +72,15 @@ To test a local checkout without registering it as a permanent install:
 claude --plugin-dir /path/to/claude-config-audit
 ```
 
-Inside the slash commands, the skill is located via `${CLAUDE_PLUGIN_ROOT}` (set automatically by Claude Code), with a fallback to `~/.claude/skills/claude-config-audit/` for standalone-skill installs. No path inside this repo assumes a specific cwd or marketplace name — it works regardless of where the plugin is mounted.
+The plugin layout follows the official spec — `skills/claude-config-audit/SKILL.md` is where Claude Code expects a plugin-bundled skill to live. In this repo the plugin-side `skills/claude-config-audit/` directory contains symlinks pointing at the canonical files at the repo root, so plugin discovery finds the skill while the standalone-skill install also works. Both paths resolve scripts via `${CLAUDE_PLUGIN_ROOT}` (set automatically by Claude Code) with a fallback to `~/.claude/skills/claude-config-audit/`.
 
-Or as a standalone skill:
+**As a standalone skill** (no slash commands, plain-language triggering only):
 
 ```bash
 git clone https://github.com/MJWNA/claude-config-audit.git ~/.claude/skills/claude-config-audit
 ```
+
+Standalone install reads SKILL.md at the clone root directly. Use this path if you don't want the slash commands or if your Claude Code version doesn't support plugins.
 
 ### 2. Restart Claude Code
 
@@ -132,7 +143,7 @@ Targets the **executable layer**:
 
 For each item the skill answers: *did the user actually invoke this in the last 90 days?* Plus the security-pass agent checks: *is anything here unsafe?* (hooks calling `curl` in `PreToolUse`, hardcoded tokens, over-broad permissions).
 
-Cleanup quarantines items rather than deleting them. Restoration is one command for 7 days.
+Cleanup quarantines items rather than deleting them. For `mv`'d items (deleted plugins/skills) restoration is one command. For copy-snapshots (rule edits) the script surfaces a CONFLICT prompt — the original is still in place, possibly edited, and the script asks you whether to keep the edit or roll back to the snapshot. Both flows are reversible for 7 days.
 
 ### Half 2 — Rules audit (`/audit-rules`)
 
@@ -339,10 +350,16 @@ claude-config-audit/
 ├── .github/
 │   ├── ISSUE_TEMPLATE/                 # Bug report + feature request templates
 │   └── workflows/
-│       └── ci.yml                      # bash -n + shellcheck + py_compile + tests
+│       └── ci.yml                      # bash -n + shellcheck + py_compile + tests + integration smoke
 ├── commands/
 │   ├── audit-skills.md                 # /audit-skills slash command
 │   └── audit-rules.md                  # /audit-rules slash command
+├── skills/
+│   └── claude-config-audit/            # Plugin-canonical skill layout (symlinks to root)
+│       ├── SKILL.md → ../../SKILL.md
+│       ├── references → ../../references
+│       ├── scripts → ../../scripts
+│       └── assets → ../../assets
 ├── assets/
 │   ├── skills-audit-template.html      # Self-contained HTML for skills decisions
 │   └── rules-audit-template.html       # Self-contained HTML for rules decisions
@@ -364,7 +381,8 @@ claude-config-audit/
 │   ├── test_analyze_session_history.py # Synthetic-projects fixture tests
 │   ├── test_audit_history.py           # Envelope parsing + diff tests
 │   ├── test_inject_audit_data.py       # Adversarial-payload injection tests
-│   └── test_quarantine_roundtrip.sh    # quarantine.sh + restore.sh roundtrip
+│   ├── test_quarantine_roundtrip.sh    # quarantine.sh + restore.sh roundtrip
+│   └── test_integration.sh             # Full pipeline against synthetic ~/.claude/
 ├── docs/
 │   ├── PHILOSOPHY.md                   # Why this skill exists
 │   ├── HOW-IT-WORKS.md                 # Detailed phase-by-phase walkthrough
@@ -524,7 +542,7 @@ The skill is intentionally opinionated about workflow but flexible about content
 
 ## 📜 Credits
 
-Original pattern by [Ronnie Meagher (@MJWNA)](https://github.com/MJWNA). v2 extends the skill with quarantine-based reversibility, decision memory, security-pass agent, slash commands, and project-scope coverage. v2.1 ships the security-findings UI, deterministic invocation counts (no more agent-invented numbers), HTML data-injection hardening (`</script>` / U+2028 / U+2029 escaped before splice), explicit `${CLAUDE_PLUGIN_ROOT}` resolution, and CI.
+Original pattern by [Ronnie Meagher (@MJWNA)](https://github.com/MJWNA). v2 extends the skill with quarantine-based reversibility, decision memory, security-pass agent, slash commands, and project-scope coverage. v2.1 ships the security-findings UI, deterministic invocation counts (no more agent-invented numbers), HTML data-injection hardening (`</script>` / U+2028 / U+2029 escaped before splice), explicit `${CLAUDE_PLUGIN_ROOT}` resolution, and CI. v2.2 fixes the spec-canonical plugin layout (so plain-language triggering works under plugin install, not just standalone), quarantine session uniqueness, the rules-workflow snapshot ordering, the nested-fence markdown export bug, restore-semantics accuracy, the subshell-counter pattern, and adds an integration smoke test.
 
 Detailed philosophy: [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md).
 

@@ -32,7 +32,11 @@ esac
 restored=0
 conflicts=0
 
-find "$session" -mindepth 1 -maxdepth 1 -not -name 'MANIFEST.md' -print | while IFS= read -r p; do
+# Use process substitution so the loop runs in the parent shell, not a
+# subshell. With `find ... | while`, every increment to `restored` and
+# `conflicts` would be lost when the subshell exits — the summary at the
+# end would always print 0/0 regardless of what happened.
+while IFS= read -r p; do
   flat=$(basename "$p")
   # Reverse flatten: `--` → `/`. This is the same encoding quarantine.sh uses.
   original_rel=$(printf '%s' "$flat" | sed 's|--|/|g')
@@ -54,7 +58,16 @@ find "$session" -mindepth 1 -maxdepth 1 -not -name 'MANIFEST.md' -print | while 
     printf 'restored: %s\n' "$dest"
     restored=$((restored + 1))
   fi
-done
+done < <(find "$session" -mindepth 1 -maxdepth 1 -not -name 'MANIFEST.md' -print)
+
+# Summary line — visible to the user, useful for the rules-half flow where
+# a partial restore (some restored, some conflicts to resolve) is the
+# common case.
+if $dry_run; then
+  printf '\nDry run: would restore %d items (skipped: %d conflict(s))\n' "$restored" "$conflicts"
+else
+  printf '\nRestored %d items, %d conflict(s) require manual resolution\n' "$restored" "$conflicts"
+fi
 
 if ! $dry_run; then
   # If everything restored cleanly, remove the empty session dir (manifest only).

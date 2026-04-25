@@ -7,11 +7,12 @@
 # quarantine has a TTL: 7 days unless the user changes it.
 #
 # Usage:
-#   quarantine.sh init                  # create a quarantine session, print its path
-#   quarantine.sh add <session> <path>  # move <path> into the session
-#   quarantine.sh manifest <session>    # write MANIFEST.md with restore instructions
-#   quarantine.sh list                  # list existing quarantine sessions
-#   quarantine.sh purge                 # delete sessions older than 7 days (idempotent)
+#   quarantine.sh init                          # create a session, print its path
+#   quarantine.sh add <session> <path>          # MOVE <path> into the session (used for skill/plugin deletes)
+#   quarantine.sh add <session> <path> --copy   # COPY <path> into the session (used for files about to be edited in place)
+#   quarantine.sh manifest <session>            # write MANIFEST.md with restore instructions
+#   quarantine.sh list                          # list existing quarantine sessions
+#   quarantine.sh purge                         # delete sessions older than 7 days (idempotent)
 #
 # Every quarantined session is one directory under ~/.claude/.audit-quarantine/
 # named with an ISO-ish timestamp. Inside it, paths are flattened with `--`
@@ -57,10 +58,15 @@ flatten_path() {
 
 case "$cmd" in
   init)
-    # ISO-ish timestamp, safe for filenames on every OS we care about.
+    # ISO-ish timestamp + 6-char random suffix. Two callers in the same
+    # second would otherwise collide on the second-resolution timestamp;
+    # `mkdir` would still succeed for the second, silently sharing the
+    # session dir with the first. The suffix makes each session unique.
+    # `mktemp -d` also creates the dir atomically, eliminating a TOCTOU
+    # race between mkdir and the first `add` call.
     ts=$(date '+%Y-%m-%dT%H-%M-%S')
-    session="${QUARANTINE_BASE}/${ts}"
-    mkdir -p "$session"
+    mkdir -p "$QUARANTINE_BASE"
+    session=$(mktemp -d "${QUARANTINE_BASE}/${ts}-XXXXXX")
     printf '%s' "$session"
     ;;
 
@@ -151,7 +157,9 @@ case "$cmd" in
     now=$(now_epoch)
     cutoff=$(( now - TTL_DAYS * 86400 ))
     purged=0
-    find "$QUARANTINE_BASE" -mindepth 1 -maxdepth 1 -type d -print | while IFS= read -r s; do
+    # Process substitution keeps the counter in the parent shell so the
+    # final summary line reflects what actually happened.
+    while IFS= read -r s; do
       m=$(file_mtime "$s")
       [ -z "$m" ] && continue
       if [ "$m" -lt "$cutoff" ]; then
@@ -159,7 +167,8 @@ case "$cmd" in
         printf 'purged (>%sd): %s\n' "$TTL_DAYS" "$(basename "$s")"
         purged=$((purged + 1))
       fi
-    done
+    done < <(find "$QUARANTINE_BASE" -mindepth 1 -maxdepth 1 -type d -print)
+    printf 'Purged %d session(s)\n' "$purged"
     ;;
 
   help|*)

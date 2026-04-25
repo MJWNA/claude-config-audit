@@ -138,19 +138,46 @@ Reply 'go' to execute.
 
 Wait for confirmation.
 
-## Phase 7 — Execute
+## Phase 7 — Snapshot, then execute
+
+> **Step 1 is the snapshot. Skipping it leaves rule edits irreversible.** This is the only safety rail for the rules half — unlike the skills half (which `mv`s into quarantine, so the reversal is the original `mv` undone), rule edits modify files in place. Without a copy in the quarantine session, the user has no way back if an edit goes wrong.
 
 Order matters. Do this sequence:
 
+```bash
+SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/claude-config-audit}"
+
+# 1. Open a quarantine session and copy the current state of CLAUDE.md and
+#    every rule file that's about to be edited or extended. The --copy flag
+#    leaves the originals in place — we still need them to edit.
+SESSION=$(bash "$SKILL_DIR/scripts/quarantine.sh" init)
+bash "$SKILL_DIR/scripts/quarantine.sh" add "$SESSION" "$HOME/.claude/CLAUDE.md" --copy
+for rule in <every-existing-rule-being-edited-or-extended>; do
+  bash "$SKILL_DIR/scripts/quarantine.sh" add "$SESSION" "$rule" --copy
+done
+bash "$SKILL_DIR/scripts/quarantine.sh" manifest "$SESSION"
 ```
-1. Write all new rule files (parallel — they're independent)
-2. Read each existing rule that needs editing (sequential, one per file)
-3. Edit each existing rule with extensions or refresh content
-4. Read CLAUDE.md
-5. Edit CLAUDE.md to fix classifications + add new rule index entries
+
+Only after the snapshot lands, proceed:
+
+```
+2. Write all new rule files (parallel — they're independent, no snapshot
+   needed since they didn't exist before)
+3. Read each existing rule that needs editing (sequential, one per file)
+4. Edit each existing rule with extensions or refresh content
+5. Read CLAUDE.md
+6. Edit CLAUDE.md to fix classifications + add new rule index entries
 ```
 
 For the CLAUDE.md edit, prefer **rewriting the rule index table** over piecemeal edits. The new index typically has different structure (split into "Always-loaded" vs "Path-scoped" sub-tables instead of a single mixed table) so a single big edit is cleaner.
+
+If anything goes wrong mid-execution, restore is one command:
+
+```bash
+bash "$SKILL_DIR/scripts/restore.sh" "$SESSION"
+```
+
+Note that for `--copy`'d items the restore script will hit a CONFLICT (the destination exists, because we left it in place). Restore prints both `rm -rf` options so you can decide whether to keep the edited version or roll back to the snapshot.
 
 ## Phase 8 — Verify
 

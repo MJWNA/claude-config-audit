@@ -76,6 +76,49 @@ jobs:
       - name: quarantine + restore
         run: bash tests/test_quarantine_roundtrip.sh
 
+  integration-smoke:
+    # End-to-end: synthetic ~/.claude/ → discovery → counts → inject → quarantine → restore.
+    # Catches gaps between modules that the per-module unit tests can't see —
+    # e.g. discovery output the analyzer can't parse, template injection
+    # producing valid HTML but corrupt data, restore summary that doesn't
+    # reflect actual restored count.
+    name: integration smoke test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: end-to-end pipeline
+        run: bash tests/test_integration.sh
+
+  plugin-layout:
+    # Plugin discovery requires skills/<name>/SKILL.md. We mirror the root
+    # SKILL.md into skills/claude-config-audit/ via symlinks. If a clone
+    # ever loses the symlinks (e.g. someone copies files instead of cloning,
+    # or a Windows checkout breaks them), plugin install would silently
+    # find no skill — only the slash commands would work. This job is the
+    # canary for that.
+    name: plugin layout (symlinks resolve)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SKILL.md and resources resolve in plugin layout
+        run: |
+          set -e
+          test -f skills/claude-config-audit/SKILL.md
+          test -d skills/claude-config-audit/references
+          test -d skills/claude-config-audit/scripts
+          test -d skills/claude-config-audit/assets
+          # The symlinked SKILL.md must contain real content, not a broken link.
+          grep -q "^# Claude Config Audit" skills/claude-config-audit/SKILL.md
+          # Plugin manifest must exist at the canonical location.
+          test -f .claude-plugin/plugin.json
+          echo "plugin layout OK"
+
   template-smoke:
     name: HTML template smoke test
     runs-on: ubuntu-latest
