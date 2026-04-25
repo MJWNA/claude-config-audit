@@ -43,12 +43,16 @@ some content
     def test_returns_none_when_no_envelope(self):
         self.assertIsNone(self.mod.parse_envelope("no envelope here"))
 
-    def test_returns_none_on_invalid_json(self):
+    def test_raises_on_invalid_json(self):
+        # v2.3 distinguishes "no envelope" (returns None) from "envelope
+        # present but JSON inside is malformed" (raises EnvelopeError) so the
+        # operator gets a different recovery hint for each case.
         md = """<!-- claude-config-audit:decisions
 { invalid json
 -->
 """
-        self.assertIsNone(self.mod.parse_envelope(md))
+        with self.assertRaises(self.mod.EnvelopeError):
+            self.mod.parse_envelope(md)
 
 
 class TestSaveAndLatest(unittest.TestCase):
@@ -96,6 +100,55 @@ class TestSaveAndLatest(unittest.TestCase):
         md.write_text("no envelope")
         result = self._run("save", "garbage", str(md))
         self.assertNotEqual(result.returncode, 0)
+
+    def test_save_rejects_envelope_audit_type_mismatch(self):
+        # v2.3 fix: pasting a rules-export under `save skills` would
+        # silently write the rules envelope as `…--skills.json`, then the
+        # next `diff skills` would compare current skills against
+        # historical *rules* decisions. cmd_save now refuses the mismatch.
+        md = Path(tempfile.mktemp(suffix=".md"))
+        md.write_text("""# Rules audit
+---
+<!-- claude-config-audit:decisions
+{"auditType": "rules", "generatedAt": "2026-01-01", "decisions": {}}
+-->
+""")
+        result = self._run("save", "skills", str(md))
+        self.assertEqual(result.returncode, 2,
+            f"expected exit 2 on auditType mismatch, got {result.returncode}: {result.stderr}")
+        self.assertIn("auditType", result.stderr)
+
+    def test_save_writes_unique_filenames_in_same_second(self):
+        # v2.3 fix: random nonce in the saved filename prevents two saves
+        # in the same wall-clock second from overwriting each other.
+        md = Path(tempfile.mktemp(suffix=".md"))
+        md.write_text("""# x
+---
+<!-- claude-config-audit:decisions
+{"auditType": "skills", "generatedAt": "2026-01-01", "decisions": {}}
+-->
+""")
+        paths = set()
+        for _ in range(5):
+            r = self._run("save", "skills", str(md))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            paths.add(r.stdout.strip())
+        self.assertEqual(len(paths), 5,
+            f"expected 5 unique save paths, got {len(paths)}: {paths}")
+
+    def test_save_distinguishes_no_envelope_from_bad_envelope(self):
+        # v2.3 split parse_envelope's None return into None vs raise so the
+        # operator gets a different recovery hint. cmd_save surfaces the
+        # parse error message for malformed JSON.
+        bad = Path(tempfile.mktemp(suffix=".md"))
+        bad.write_text("""# x
+<!-- claude-config-audit:decisions
+{ this is not valid json
+-->
+""")
+        result = self._run("save", "skills", str(bad))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid", result.stderr.lower())
 
 
 class TestDiff(unittest.TestCase):

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -44,14 +45,79 @@ from pathlib import Path
 # the start of the marker line through the end of the placeholder array.
 INJECTION_MARKER = "/* AUDIT_DATA_INJECTION_POINT */"
 
+# Defence-in-depth secret redaction. The security-pass agent prompt asks for
+# fingerprinted evidence (e.g. `OPENAI_API_KEY=***[redacted, 132 chars]`),
+# but a lazy or jailbroken agent might still paste the raw value into the
+# `evidence`/`why`/`fix` fields. Without this layer, such a value would land
+# in the rendered HTML and ride along through the markdown export to chat /
+# the audit-history file. The patterns below catch the formats most likely
+# to be misembedded; a string matching is replaced with its prefix +
+# `***[redacted, N chars]`. The HTML still shows the user *that* a secret was
+# found; the raw bytes never leave the inject step.
+_SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # Provider-prefixed keys: OpenAI sk- / sk-proj-, GitHub ghp_/gho_/ghu_/ghs_/ghr_,
+    # Slack xoxb-/xoxp-/xoxa-, Google AIza, Anthropic sk-ant-, Stripe sk_live_/rk_live_,
+    # AWS AKIA/ASIA. Treat 12+ char run after the prefix as the secret body.
+    (re.compile(r"\b(sk-(?:proj-|ant-)?)[A-Za-z0-9_\-]{12,}\b"), r"\1"),
+    (re.compile(r"\b(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]{20,}\b"), r"\1"),
+    (re.compile(r"\b(xox[bpao]-)[A-Za-z0-9\-]{10,}\b"), r"\1"),
+    (re.compile(r"\b(AIza)[A-Za-z0-9_\-]{30,}\b"), r"\1"),
+    (re.compile(r"\b(sk_live_|rk_live_|sk_test_)[A-Za-z0-9]{20,}\b"), r"\1"),
+    (re.compile(r"\b(AKIA|ASIA)[A-Z0-9]{16,}\b"), r"\1"),
+    # Generic key=value pattern: TOKEN=, SECRET=, API_KEY=, PASSWORD=,
+    # CREDENTIAL=, AUTH= followed by 12+ non-whitespace chars. Catches
+    # arbitrary providers and the env-block format common in settings.json.
+    (
+        re.compile(
+            r"(?i)\b((?:api[_\-]?)?(?:token|secret|key|password|credential|auth)\s*[=:]\s*[\"\']?)([^\s\"\']{12,})",
+        ),
+        r"\1",
+    ),
+]
+
+
+def _redact_string(s: str) -> str:
+    """Run the secret-pattern scrubber over one string. Idempotent."""
+    if not s or "[redacted" in s:
+        return s
+    out = s
+    for pat, _ in _SECRET_PATTERNS:
+        def _repl(match: re.Match) -> str:
+            full = match.group(0)
+            prefix = match.group(1)
+            body_len = len(full) - len(prefix)
+            return f"{prefix}***[redacted, {body_len} chars]"
+        out = pat.sub(_repl, out)
+    return out
+
+
+def _redact_recursive(value):
+    """Walk a JSON-like structure and redact every string in place."""
+    if isinstance(value, str):
+        return _redact_string(value)
+    if isinstance(value, list):
+        return [_redact_recursive(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _redact_recursive(v) for k, v in value.items()}
+    return value
+
 
 def safe_json_for_script(data: object) -> str:
     """Serialise `data` as JSON suitable for embedding inside a <script> tag.
 
-    Escapes the four byte sequences that are valid JSON but unsafe in HTML/JS
-    embedding. See module docstring for the threat model.
+    Two layers of defence:
+      1. **Secret redaction** — a regex scrubber masks values matching common
+         secret formats (provider-prefixed keys, generic TOKEN=/SECRET=/KEY=
+         assignments). The security-pass agent is *asked* to fingerprint
+         secrets in its evidence field, but a misbehaving agent might still
+         paste the raw value. Catching it here means raw secrets never reach
+         the rendered HTML, the markdown export, or the audit-history file.
+      2. **Script-context escaping** — escapes the four byte sequences that
+         are valid JSON but unsafe in HTML/JS embedding (<, </, U+2028,
+         U+2029). See module docstring for the threat model.
     """
-    raw = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    redacted = _redact_recursive(data)
+    raw = json.dumps(redacted, ensure_ascii=False, separators=(",", ":"))
     return (
         raw.replace("<", "\\u003c")
         .replace(">", "\\u003e")
@@ -166,12 +232,31 @@ def main(argv: list[str]) -> int:
     )
     args = p.parse_args(argv)
 
-    template_text = Path(args.template).read_text(encoding="utf-8")
-
+    # Wrap file reads with friendly errors. Default Python tracebacks are
+    # 12+ lines of internal frames; an end-user sees "FileNotFoundError" and
+    # has no idea what to do. The wrapped messages name the missing file
+    # and what to check.
+    template_path = Path(args.template)
+    if not template_path.is_file():
+        print(f"template file not found: {args.template}", file=sys.stderr)
+        return 2
     try:
-        data = json.loads(Path(args.data).read_text(encoding="utf-8"))
+        template_text = template_path.read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"could not read template {args.template}: {e}", file=sys.stderr)
+        return 2
+
+    data_path = Path(args.data)
+    if not data_path.is_file():
+        print(f"audit data file not found: {args.data}", file=sys.stderr)
+        return 2
+    try:
+        data = json.loads(data_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         print(f"audit data file is not valid JSON: {e}", file=sys.stderr)
+        return 2
+    except OSError as e:
+        print(f"could not read audit data {args.data}: {e}", file=sys.stderr)
         return 2
 
     try:
@@ -181,7 +266,11 @@ def main(argv: list[str]) -> int:
         return 2
 
     if args.output:
-        Path(args.output).write_text(out, encoding="utf-8")
+        try:
+            Path(args.output).write_text(out, encoding="utf-8")
+        except OSError as e:
+            print(f"could not write output {args.output}: {e}", file=sys.stderr)
+            return 2
         print(args.output)
     else:
         sys.stdout.write(out)

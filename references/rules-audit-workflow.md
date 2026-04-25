@@ -136,7 +136,7 @@ Summarise:
 Reply 'go' to execute.
 ```
 
-Wait for confirmation.
+Wait for confirmation. **Even in auto mode, the destructive-action confirmation rule overrides "minimise interruptions"** — the rules half edits CLAUDE.md and rule files in place, so a `--copy` snapshot only roll-backs via a CONFLICT prompt (per `safety-protocol.md`). Auto-mode silent execution here would create an irreversible-feeling state for the user; they need to see the change list and say "go".
 
 ## Phase 7 — Snapshot, then execute
 

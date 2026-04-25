@@ -4,6 +4,53 @@ All notable changes to claude-config-audit are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] — 2026-04-26
+
+Third audit cycle (two new external LLM reviewers + five parallel internal sub-agent audits across performance, privacy, cross-platform, error-handling, and test-coverage). 30+ findings consolidated; this release fixes every confirmed correctness issue and the polish items most likely to cause real-world regressions.
+
+The headline finding was that v2.2's recommended `claude plugin marketplace add MJWNA/claude-config-audit` install never actually worked — the repo had `plugin.json` but no `marketplace.json`, so `claude plugin marketplace add` errored out with "Marketplace file not found". External Reviewer C reproduced this with a temp HOME; Context7 confirmed the spec.
+
+### Added
+
+- **`.claude-plugin/marketplace.json`** — single-plugin marketplace pointing at the repo. Makes the documented install path actually work: `/plugin marketplace add MJWNA/claude-config-audit` followed by `/plugin install claude-config-audit@claude-config-audit`. Verified by the spec at https://code.claude.com/docs/en/plugin-marketplaces.
+- **Defence-in-depth secret redaction** in `scripts/inject-audit-data.py`. The security-pass agent prompt asks for fingerprinted evidence (`OPENAI_API_KEY=***[redacted, 132 chars]`), but a misbehaving agent could still paste raw values into `evidence`/`why`/`fix` fields. New `_redact_string()` masks provider-prefixed keys (OpenAI, GitHub, Slack, Google, Stripe, AWS, Anthropic) and generic `TOKEN=`/`SECRET=`/`KEY=`/`PASSWORD=` assignments before injection, so raw secrets never reach the rendered HTML, the markdown export, or the audit-history file. Idempotent (re-running on already-redacted text doesn't double-mark).
+- **`.gitattributes`** with `text=auto eol=lf` plus per-extension overrides. Without this, Windows checkouts converted `.sh` files to CRLF (`#!/usr/bin/env bash\r` then fails to find the interpreter; `case $cmd in init)` becomes `init$'\r'` and never matches).
+- **Windows runner on the `plugin-layout` job.** The pre-existing canary ran Linux-only — exactly the platform where ext4 always honours symlinks. The Windows job sets `git config core.symlinks true` + re-checks out, then asserts `SKILL.md` size > 1000 bytes (catches the broken-symlink-as-text-file case where a 12-byte file containing `../../SKILL.md` would otherwise pass `test -f`).
+- **Schema versioning on audit-history files** (`schemaVersion: 1`). `cmd_diff` refuses to diff against a future-schema file with an actionable error message — prevents silent mis-diffs after envelope evolution.
+- **Audit-history TTL** (`CLAUDE_CONFIG_AUDIT_HISTORY_TTL_DAYS`, default 180 days) + new `audit-history.py purge` subcommand. Lets free-text `note` fields the user typed in the HTML decision tool age out instead of accumulating in `~/.claude/` forever.
+- **Random-suffixed audit-history filenames** (`<ts>-<6-hex-nonce>--<type>.json`). Mirrors v2.2's quarantine-init fix: two saves in the same wall-clock second no longer overwrite each other.
+- **Recursive rule discovery.** Per the official spec (https://code.claude.com/docs/en/memory), `~/.claude/rules/` is walked recursively. Pre-2.3 `discover-config.sh` and `verify-prerequisites.sh` matched only `*.md` at depth 1, missing nested rules like `~/.claude/rules/frontend/react.md`. Especially important for a skill that's auditing rule coverage — it must actually see every rule.
+- **`.meta.json` sidecars on quarantined items.** Each item gets `{<flattened-name>}.meta.json` containing the original absolute path, mode (move/copy), and quarantine timestamp. Restore reads the sidecar instead of reverse-flattening the basename — exact restore regardless of what's in the path.
+- **Five new tests** wired into CI: `test_verify_prerequisites.sh`, `test_discover_recursive.sh`, `test_fence_wrap.py`, plus four new test classes in `test_audit_history.py` (envelope mismatch, unique-filename, parse-error vs no-envelope distinction) and `test_inject_audit_data.py` (secret-redaction patterns + end-to-end inject pipeline). Total: 44 tests (was 27).
+- **`shell-smoke-tests` CI job** running the new bash tests on Ubuntu and macOS.
+
+### Changed
+
+- **README install instructions** now use the modern Claude Code plugin commands (`/plugin marketplace add` + `/plugin install`) which previously would have failed for lack of `marketplace.json`. The fallback standalone-install path is unchanged.
+- **`scripts/quarantine.sh` unknown commands now exit 2** with usage text on stderr. Pre-2.3 a typo'd verb (`quarantine.sh ad` instead of `add`) hit the `help|*)` arm, printed usage, and exited 0 — an automation pipeline would proceed under the false impression the operation succeeded.
+- **`audit-history.py save` validates envelope `auditType`.** Pre-2.3 a rules-export pasted under `save skills` was silently written as `…--skills.json`; the next `diff skills` would compare current skills against historical *rules* decisions. Now refuses the mismatch with exit 2.
+- **`parse_envelope` distinguishes "no envelope" from "envelope but bad JSON"** via a new `EnvelopeError` exception. The two failure modes need different recovery actions (re-paste vs re-export); pre-2.3 they were indistinguishable.
+- **Friendly file-not-found errors** in `inject-audit-data.py` and `audit-history.py`. Replaces 12-line Python tracebacks with one-line actionable messages ("audit data file not found: <path>").
+- **Rules workflow now mandates "even in auto mode" confirmation** at the deletion-plan summary. Pre-2.3 the `Wait for confirmation.` line was unguarded — auto mode could (in principle) silently execute rule edits, where `--copy` snapshots only roll back via CONFLICT prompts. Mirrors the explicit guidance in the skills workflow.
+- **CI matrix drops Python 3.9** (EOL 2025-10-31), adds Python 3.13.
+
+### Fixed
+
+- **Quarantine path corruption for names containing `--`.** Pre-2.3, a skill named `foo--bar` would `mv` to quarantine as `skills--foo--bar`, then restore reverse-flattened `--` → `/` and put it at `~/.claude/skills/foo/bar/`. Silent corruption — `restore.sh` reported "Restored 1 items" but the file landed at the wrong path. The new `.meta.json` sidecar makes restore exact regardless of separator collisions. Backward-compatible: legacy quarantine sessions without sidecars still use the old reverse-flatten as a fallback.
+- **Marketplace install path documented in README never worked** — the repo lacked `marketplace.json` so `claude plugin marketplace add` errored out. See [Added].
+- **Recursive rule discovery missed nested rules** — see [Added].
+- **Security-pass agent could echo raw API keys verbatim into HTML** — see [Added].
+- **CRLF + symlink corruption on Windows** — see [Added] for `.gitattributes` and Windows CI.
+- **Quarantine `help|*` swallowed unknown commands** — see [Changed].
+- **Audit-history save accepted any envelope auditType** — see [Changed].
+- **`parse_envelope` returned None for both no-envelope and bad-JSON** — see [Changed].
+- **Audit-history file timestamp collision** under same-second saves — see [Added] random-suffix.
+
+### Audit history
+
+- v2.0 → v2.2 self-correction trail described in earlier entries.
+- v2.3 (this release) closes 30+ findings from two external reviewers (Audit C scoring 8.6/10, Audit D scoring 9.2/10) plus five parallel internal sub-agent audits covering performance, privacy, cross-platform, error-handling, and test-coverage. The biggest external miss was Audit B's failure to catch the marketplace install bug; that's the bug this release fixes first.
+
 ## [2.2.0] — 2026-04-25
 
 Second-pass audit fixes from two independent LLM reviewers. The big one is plugin packaging — until this release, the SKILL.md at the repo root was only discovered by Claude Code under the standalone-skill install path. Plugin installs registered the slash commands but the skill itself (with all its trigger phrases for plain-language invocation) was invisible to plugin discovery, which expects `skills/<name>/SKILL.md`.

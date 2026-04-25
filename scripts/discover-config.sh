@@ -115,26 +115,30 @@ PY
   fi
   printf '\n'
 
-  # Rules
+  # Rules — discovered RECURSIVELY per the official Claude Code spec.
+  # https://code.claude.com/docs/en/memory and the .claude/rules/ folder docs
+  # confirm subdirectories are walked: a rule at `frontend/react.md` loads
+  # the same way as a rule at the root. Earlier versions of this script used
+  # `*.md` (one level) and missed nested rules — important because a skill
+  # that audits "every rule" must actually see every rule.
   printf '## Rules (%s/rules/)\n' "$base"
   local rules_dir="$base/rules"
   if [ -d "$rules_dir" ]; then
     local rule lines bytes has_fm
-    local rcount=0
-    for rule in "$rules_dir"/*.md; do
-      [ -f "$rule" ] || continue
-      rcount=$((rcount + 1))
-    done
+    local rcount
+    rcount=$(find "$rules_dir" -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
     printf 'Total: %s\n\n' "$rcount"
-    for rule in "$rules_dir"/*.md; do
-      [ -f "$rule" ] || continue
+    # Rule paths are emitted relative to rules_dir so the user sees the
+    # subdirectory structure, e.g. `frontend/react.md` not just `react.md`.
+    while IFS= read -r rule; do
       lines=$(wc -l < "$rule" | tr -d ' ')
       bytes=$(wc -c < "$rule" | tr -d ' ')
       has_fm="no"
       [ "$(head -1 "$rule" 2>/dev/null)" = "---" ] && has_fm="yes"
+      local rel="${rule#$rules_dir/}"
       printf '  - %s (%s lines, %s bytes, frontmatter: %s)\n' \
-        "$(basename "$rule")" "$lines" "$bytes" "$has_fm"
-    done
+        "$rel" "$lines" "$bytes" "$has_fm"
+    done < <(find "$rules_dir" -type f -name '*.md' 2>/dev/null | sort)
   else
     printf '  (no %s/rules/ directory)\n' "$base"
   fi

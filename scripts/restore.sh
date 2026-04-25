@@ -32,20 +32,43 @@ esac
 restored=0
 conflicts=0
 
+# Resolve a quarantined item to its original path. Prefers the sidecar
+# `<item>.meta.json` (added in v2.3 — exact, lossless), falls back to the
+# reverse-flatten of the basename (legacy — lossy for paths containing `--`).
+# Using --copy items leave a meta.json so restore knows they were snapshots,
+# not moves.
+resolve_original() {
+  local item="$1"
+  local meta="${item}.meta.json"
+  if [ -f "$meta" ]; then
+    python3 -c "import json; print(json.load(open('$meta'))['originalPath'])"
+  else
+    # Legacy fallback for sessions created before v2.3.
+    local flat
+    flat=$(basename "$item")
+    local rel
+    rel=$(printf '%s' "$flat" | sed 's|--|/|g')
+    printf '%s' "${CLAUDE_DIR}/${rel}"
+  fi
+}
+
 # Use process substitution so the loop runs in the parent shell, not a
 # subshell. With `find ... | while`, every increment to `restored` and
 # `conflicts` would be lost when the subshell exits — the summary at the
 # end would always print 0/0 regardless of what happened.
+# We exclude *.meta.json sidecars and MANIFEST.md from the iteration; the
+# items themselves are everything else at depth 1.
 while IFS= read -r p; do
-  flat=$(basename "$p")
-  # Reverse flatten: `--` → `/`. This is the same encoding quarantine.sh uses.
-  original_rel=$(printf '%s' "$flat" | sed 's|--|/|g')
-  dest="${CLAUDE_DIR}/${original_rel}"
+  case "$(basename "$p")" in
+    MANIFEST.md|*.meta.json) continue ;;
+  esac
+
+  dest=$(resolve_original "$p")
 
   if [ -e "$dest" ]; then
     printf 'CONFLICT: %s already exists. Resolve manually:\n' "$dest"
-    printf '  - keep current:  rm -rf %s\n' "$p"
-    printf '  - restore old:   rm -rf %s && mv %s %s\n' "$dest" "$p" "$dest"
+    printf '  - keep current:  rm -rf %s %s.meta.json\n' "$p" "$p"
+    printf '  - restore old:   rm -rf %s && mv %s %s && rm -f %s.meta.json\n' "$dest" "$p" "$dest" "$p"
     conflicts=$((conflicts + 1))
     continue
   fi
@@ -55,10 +78,11 @@ while IFS= read -r p; do
   else
     mkdir -p "$(dirname "$dest")"
     mv "$p" "$dest"
+    rm -f "${p}.meta.json"
     printf 'restored: %s\n' "$dest"
     restored=$((restored + 1))
   fi
-done < <(find "$session" -mindepth 1 -maxdepth 1 -not -name 'MANIFEST.md' -print)
+done < <(find "$session" -mindepth 1 -maxdepth 1 -not -name 'MANIFEST.md' -not -name '*.meta.json' -print)
 
 # Summary line — visible to the user, useful for the rules-half flow where
 # a partial restore (some restored, some conflicts to resolve) is the

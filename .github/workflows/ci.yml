@@ -45,7 +45,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ['3.9', '3.11', '3.12']
+        # Python 3.9 reached end-of-life on 2025-10-31. Dropped from the
+        # matrix to focus runner budget on supported versions.
+        python-version: ['3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
 
@@ -76,6 +78,22 @@ jobs:
       - name: quarantine + restore
         run: bash tests/test_quarantine_roundtrip.sh
 
+  shell-smoke-tests:
+    # Bash-only tests for verify-prerequisites and recursive discovery.
+    # Quick to run, catch script-level regressions per-OS.
+    name: shell smoke tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify-prerequisites smoke test
+        run: bash tests/test_verify_prerequisites.sh
+      - name: discover-config recursive rules
+        run: bash tests/test_discover_recursive.sh
+
   integration-smoke:
     # End-to-end: synthetic ~/.claude/ → discovery → counts → inject → quarantine → restore.
     # Catches gaps between modules that the per-module unit tests can't see —
@@ -99,25 +117,64 @@ jobs:
     # Plugin discovery requires skills/<name>/SKILL.md. We mirror the root
     # SKILL.md into skills/claude-config-audit/ via symlinks. If a clone
     # ever loses the symlinks (e.g. someone copies files instead of cloning,
-    # or a Windows checkout breaks them), plugin install would silently
-    # find no skill — only the slash commands would work. This job is the
-    # canary for that.
+    # or a Windows checkout without core.symlinks=true), plugin install
+    # would silently find no skill — only the slash commands would work.
+    # This job is the canary for that.
+    #
+    # Windows runner included specifically because that's where this fails
+    # in practice: native Windows clones without developer mode + git
+    # core.symlinks=true store symlinks as text files containing the path.
+    # `test -f` would still pass (it's a regular file!), so the test asserts
+    # real content, not just presence.
     name: plugin layout (symlinks resolve)
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Without this, Windows checkouts can store symlinks as plain
+          # text files containing the target path. The whole point of this
+          # job is to catch that, so we explicitly enable symlink support.
+          # If a real user clone fails because they don't have developer
+          # mode, our README + .gitattributes guidance handles it.
+          submodules: false
+      - name: ensure git symlink support
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git config --global core.symlinks true
+          # Re-checkout to materialise symlinks now that the config is set.
+          git checkout-index --all --force
+
       - name: SKILL.md and resources resolve in plugin layout
+        shell: bash
         run: |
           set -e
+          # `test -f` on Windows would pass for a 12-byte text file
+          # containing the symlink target. Assert the file has real content
+          # AND the expected first heading, which only the canonical SKILL.md
+          # contains.
           test -f skills/claude-config-audit/SKILL.md
           test -d skills/claude-config-audit/references
           test -d skills/claude-config-audit/scripts
           test -d skills/claude-config-audit/assets
-          # The symlinked SKILL.md must contain real content, not a broken link.
+          size=$(wc -c < skills/claude-config-audit/SKILL.md | tr -d ' ')
+          if [ "$size" -lt 1000 ]; then
+            echo "ERROR: SKILL.md is suspiciously small ($size bytes) — is the symlink resolving?"
+            cat skills/claude-config-audit/SKILL.md
+            exit 1
+          fi
           grep -q "^# Claude Config Audit" skills/claude-config-audit/SKILL.md
           # Plugin manifest must exist at the canonical location.
           test -f .claude-plugin/plugin.json
-          echo "plugin layout OK"
+          # Marketplace manifest required for `/plugin marketplace add` to
+          # work — verified in v2.3 after the v2.2 README claimed an install
+          # path that wasn't actually wired up.
+          test -f .claude-plugin/marketplace.json
+          echo "plugin layout OK on $(uname -s 2>/dev/null || echo windows)"
 
   template-smoke:
     name: HTML template smoke test

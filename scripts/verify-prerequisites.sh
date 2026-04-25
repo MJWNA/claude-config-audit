@@ -28,7 +28,8 @@ has_proj_settings=false
 
 [ -f "$CLAUDE_DIR/plugins/installed_plugins.json" ] && has_user_plugins=true
 [ -d "$CLAUDE_DIR/skills" ] && [ -n "$(find "$CLAUDE_DIR/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)" ] && has_user_skills=true
-[ -d "$CLAUDE_DIR/rules" ]  && [ -n "$(find "$CLAUDE_DIR/rules"  -mindepth 1 -maxdepth 1 -name '*.md' 2>/dev/null | head -1)" ] && has_user_rules=true
+# Recursive: rules under .claude/rules/ are discovered at any depth per spec.
+[ -d "$CLAUDE_DIR/rules" ]  && [ -n "$(find "$CLAUDE_DIR/rules"  -type f -name '*.md' 2>/dev/null | head -1)" ] && has_user_rules=true
 # Use an explicit if-block so the OR-of-two-files / set-flag reads clearly.
 # `[ A ] || [ B ] && C` is technically correct (bash treats || and && as
 # left-associative with equal precedence, so this parses as (A||B)&&C) but
@@ -37,7 +38,7 @@ if [ -f "$CLAUDE_DIR/settings.json" ] || [ -f "$CLAUDE_DIR/settings.local.json" 
   has_user_hooks=true
 fi
 
-[ -d "$PROJECT_DIR/rules" ]  && [ -n "$(find "$PROJECT_DIR/rules" -mindepth 1 -maxdepth 1 -name '*.md' 2>/dev/null | head -1)" ] && has_proj_rules=true
+[ -d "$PROJECT_DIR/rules" ]  && [ -n "$(find "$PROJECT_DIR/rules" -type f -name '*.md' 2>/dev/null | head -1)" ] && has_proj_rules=true
 if [ -f "$PROJECT_DIR/settings.json" ] || [ -f "$PROJECT_DIR/settings.local.json" ]; then
   has_proj_settings=true
 fi

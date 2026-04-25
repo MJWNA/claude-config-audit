@@ -1,0 +1,31 @@
+{
+  "name": "claude-config-audit",
+  "owner": {
+    "name": "MJWNA",
+    "url": "https://github.com/MJWNA"
+  },
+  "description": "Single-plugin marketplace exposing claude-config-audit. Required so users can run `/plugin marketplace add MJWNA/claude-config-audit` followed by `/plugin install claude-config-audit@claude-config-audit`. Without this file, marketplace add fails with 'Marketplace file not found'.",
+  "plugins": [
+    {
+      "name": "claude-config-audit",
+      "source": ".",
+      "description": "Audit and clean up your Claude Code installation — installed plugins, standalone skills, user-scope rules, hooks, MCP servers, and project-scope config. Evidence-based, reversible via 7-day quarantine, with decision memory across runs.",
+      "version": "2.3.0",
+      "author": {
+        "name": "MJWNA",
+        "url": "https://github.com/MJWNA"
+      },
+      "homepage": "https://github.com/MJWNA/claude-config-audit",
+      "license": "MIT",
+      "keywords": [
+        "audit",
+        "cleanup",
+        "config",
+        "skills",
+        "plugins",
+        "rules",
+        "hooks"
+      ]
+    }
+  ]
+}

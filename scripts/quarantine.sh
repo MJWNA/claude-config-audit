@@ -92,11 +92,25 @@ case "$cmd" in
     # files, CLAUDE.md). The caller decides which by passing --copy.
     if [ "${3:-}" = "--copy" ]; then
       cp -R "$src" "$target"
+      mode="copy"
       printf 'backed up: %s -> %s\n' "$src" "$target"
     else
       mv "$src" "$target"
+      mode="move"
       printf 'quarantined: %s -> %s\n' "$src" "$target"
     fi
+    # Sidecar with the original absolute path. Restore reads this instead of
+    # reverse-flattening — flattening is lossy for any path component
+    # containing literal `--` (e.g. a skill named `foo--bar`, or the v2 fix's
+    # ISO-timestamp directories `2026-04-25T22-30-00-XXXXXX` if ever quarantined).
+    # The sidecar makes restore exact regardless of input.
+    {
+      printf '{'
+      printf '"originalPath":%s,' "$(printf '%s' "$src" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
+      printf '"mode":"%s",' "$mode"
+      printf '"quarantinedAt":"%s"' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+      printf '}'
+    } > "${target}.meta.json"
     ;;
 
   manifest)
@@ -171,7 +185,16 @@ case "$cmd" in
     printf 'Purged %d session(s)\n' "$purged"
     ;;
 
-  help|*)
-    sed -n '2,28p' "$0"
+  help|--help|-h)
+    sed -n '2,29p' "$0"
+    ;;
+
+  *)
+    # Unknown verb — fail loudly so a typo'd `quarantine.sh ad` doesn't
+    # silently exit 0 and let an automation pipeline proceed under the
+    # belief the operation succeeded.
+    printf 'unknown command: %s\n\n' "$cmd" >&2
+    sed -n '2,29p' "$0" >&2
+    exit 2
     ;;
 esac
