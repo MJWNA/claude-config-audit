@@ -1,0 +1,162 @@
+name: 🐛 Bug report
+description: Something in the skill workflow misbehaved — wrong verdict, broken HTML, failed cleanup, etc.
+title: "[Bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The more specific you can be, the faster the fix.
+
+        **Before submitting** — please check:
+        1. Is this a security issue? If yes, **do not file a public issue**. Email the maintainer directly.
+        2. Have you read [`docs/SAFETY.md`](https://github.com/MJWNA/claude-config-audit/blob/main/docs/SAFETY.md)? Some issues turn out to be safety-protocol working as designed (e.g. the skill refusing to auto-execute deletions).
+        3. Did the skill print any error or warning before the issue occurred? If yes, paste it in the relevant section below.
+
+  - type: dropdown
+    id: which-half
+    attributes:
+      label: Which audit half were you running?
+      description: The skill has two halves — bugs often only affect one.
+      options:
+        - Skills audit (plugins + standalone skills)
+        - Rules audit (user-scope rules + CLAUDE.md)
+        - Both halves
+        - Neither — the issue happened during prerequisite check / discovery
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Which phase did the bug occur in?
+      description: See `docs/HOW-IT-WORKS.md` for the phase breakdown.
+      options:
+        - "Phase 1 — Prerequisite check"
+        - "Phase 2 — Discovery (inventory of installed items)"
+        - "Phase 3 — Categorisation"
+        - "Phase 4 — Parallel agent dispatch"
+        - "Phase 5 — Synthesis (building the HTML data array)"
+        - "Phase 6 — HTML rendering / interaction in browser"
+        - "Phase 7 — Receiving the markdown export"
+        - "Phase 8 — Confirming the deletion plan"
+        - "Phase 9 — Execution (manifest edits / rm -rf / file edits)"
+        - "Phase 10 — Verification / restart prompt"
+        - Not sure / the phase wasn't visible
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, concrete description of the bug.
+      placeholder: |
+        Example: "When I clicked 'Apply all agent verdicts' in the rules audit HTML, the existing-rules section updated but the new-rule-candidates section stayed undecided."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: |
+        Example: "I expected all four sections (existing rules, mismatches, new rules, extensions) to all get the agent's verdict applied at once."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Walk through what you did so the maintainer can reproduce the bug locally.
+        If you can attach the HTML file (after sanitising any sensitive content) or paste the markdown export, that helps a lot.
+      placeholder: |
+        1. Triggered the skill with "audit my Claude config"
+        2. Said "both halves"
+        3. Walked through skills audit, generated markdown, executed cleanup — all fine
+        4. Walked through rules audit, clicked "Apply all agent verdicts"
+        5. Section X showed Y instead of Z
+    validations:
+      required: true
+
+  - type: textarea
+    id: error-output
+    attributes:
+      label: Error output / chat logs
+      description: |
+        Paste any error messages, terminal output, or relevant excerpts from the Claude Code chat. **Redact sensitive paths and API keys before pasting.**
+      render: shell
+      placeholder: |
+        $ bash scripts/discover-config.sh
+        Error: ...
+    validations:
+      required: false
+
+  - type: input
+    id: claude-code-version
+    attributes:
+      label: Claude Code version
+      description: Run `claude --version` (or check the app's About dialog).
+      placeholder: "e.g. 1.0.42"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows (WSL)
+        - Windows (native)
+        - Other (specify in description)
+    validations:
+      required: true
+
+  - type: input
+    id: skill-version
+    attributes:
+      label: Skill version
+      description: From `CHANGELOG.md` or `git log -1` in the skill directory.
+      placeholder: "e.g. 1.0.0"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: data-loss
+    attributes:
+      label: Did the bug cause data loss?
+      description: Be specific — this affects priority. (Reminder — backups are at `~/.claude/plugins/installed_plugins.json.bak` if you ran the skills half.)
+      options:
+        - "No — bug occurred before any destructive action"
+        - "No — bug occurred but no data was modified"
+        - "Yes — but I restored from the .bak file"
+        - "Yes — and I couldn't recover (please describe)"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else worth knowing?
+      description: |
+        Custom modifications to the skill, unusual environment, recent Claude Code update, anything that might be relevant.
+      placeholder: |
+        Example: "I'd customised `references/skills-audit-workflow.md` to add a sixth bucket for design-system skills. Could be related."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Final checks
+      options:
+        - label: I've searched [existing issues](https://github.com/MJWNA/claude-config-audit/issues) and this isn't a duplicate
+          required: true
+        - label: I've redacted any sensitive content (API keys, personal paths, project names) from the report above
+          required: true

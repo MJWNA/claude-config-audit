@@ -8,6 +8,8 @@
 
 A production-ready Claude Code skill that scans your installation, dispatches parallel sub-agents to evaluate usage from your own session history, generates two interactive HTML decision tools, and safely executes the cleanup you choose.
 
+![Skills audit decision UI showing per-plugin verdict cards with invocation counts, evidence quotes, and Keep/Delete/Maybe radio buttons](docs/images/skills-audit-screenshot.png)
+
 ---
 
 ## 🎯 Why this exists
@@ -148,24 +150,23 @@ When you trigger the skill, here's what the conversation looks like (abbreviated
 >
 > **Claude:** All 5 agents back. Built `./skills-audit.html` with your actual config pre-loaded. **Open it: `open ./skills-audit.html`**. Click "Apply all agent verdicts" to bulk-load recommendations, walk through each card, then paste the generated markdown back here.
 
-You then open the HTML, see something like this for each plugin/skill:
+### Skills audit decision tool
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│ ▶ figma                                                                │
-│   plugin · 🤖 🗑️ DELETE · 📊 0 in 90d                                  │
-│                                              [✅ keep] [🗑️ delete] [🤔]│
-├────────────────────────────────────────────────────────────────────────┤
-│ What: 5 skills (generate-design, implement-design...) + figma MCP      │
-│ Most recent: Never                                                     │
-│ Evidence: mcp__plugin_figma_figma__authenticate appears 334× in raw    │
-│           grep, but ALL system-prompt tool definitions, NEVER actually │
-│           called. Zero real tool_use entries.                          │
-│ 🤖 Agent verdict: DELETE                                               │
-│ Five skills + an MCP server with zero traction. Pure context bloat —   │
-│ figma authenticates on every session-start but is never used.          │
-└────────────────────────────────────────────────────────────────────────┘
-```
+Each plugin or standalone skill becomes a card with the agent's verdict, the actual invocation count from your session history, the evidence behind the verdict, and a three-way decision toggle:
+
+![Skills audit — close-up of a card showing the context7 plugin with KEEP verdict, 220 invocations, evidence quotes, and the agent reasoning panel](docs/images/skills-audit-screenshot.png)
+
+The sticky toolbar shows live counts (`✅ 5 · 🗑️ 4 · 🤔 1 · ○ 0 / 10 · 🤖 9/10 match agent`) so you always know how much is left and where you've overridden the agent.
+
+### Rules audit decision tool
+
+The rules half has a richer interface — five sections (existing rules, classification mismatches, new rule candidates, extensions, spec primer) and additional decision options per section. Each existing rule shows what it does, when it fires, why it exists, what would go wrong without it, plus a refresh-value rating with explanation:
+
+![Rules audit — context7-docs.md card expanded showing What/When/Why/Without/Quality sections plus the agent verdict reasoning](docs/images/rules-audit-screenshot.png)
+
+For new rule candidates, the card includes the **full proposed file content** in an expandable section — so you can see exactly what would land in `~/.claude/rules/<name>.md` before saying yes.
+
+### Output
 
 You make decisions, hit **📋 Generate Markdown**, paste back. Claude shows the deletion plan, you say "go", it executes. Done.
 

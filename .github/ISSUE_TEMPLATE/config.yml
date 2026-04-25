@@ -1,0 +1,18 @@
+# GitHub Issue Template config
+# Forces users through one of the structured templates rather than dumping unstructured prose.
+# See https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
+
+blank_issues_enabled: false
+
+contact_links:
+  - name: 📚 Read the docs first
+    url: https://github.com/MJWNA/claude-config-audit#-faq
+    about: Most "how do I..." questions are answered in the README, the philosophy doc, or the how-it-works walkthrough.
+
+  - name: 🛡️ Security issue?
+    url: https://github.com/MJWNA/claude-config-audit/security/policy
+    about: Don't file a public issue. Use GitHub's private security reporting instead.
+
+  - name: 💬 General discussion
+    url: https://github.com/MJWNA/claude-config-audit/discussions
+    about: Ideas, questions, "is this the right tool for X" — better as discussions than issues.

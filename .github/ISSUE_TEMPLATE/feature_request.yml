@@ -1,0 +1,141 @@
+name: ✨ Feature request
+description: Suggest an enhancement, a new audit category, a new safety rail, or a workflow change.
+title: "[Feature] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for thinking about how this skill could be better. The most useful feature requests come with concrete user stories and example workflows — not just "it would be cool if…".
+
+        **Before submitting** — please check:
+        1. Is this already on the [roadmap in README.md](https://github.com/MJWNA/claude-config-audit#-roadmap)? If yes, comment there instead.
+        2. Could this be done by [customising the skill](https://github.com/MJWNA/claude-config-audit/blob/main/docs/EXTENDING.md) instead of changing the upstream? If yes, please describe the customisation as the feature.
+
+  - type: dropdown
+    id: feature-type
+    attributes:
+      label: What kind of feature?
+      options:
+        - New audit category (audit something the skill doesn't currently look at)
+        - New safety rail
+        - New decision UI option in the HTML
+        - New agent prompt / better evidence-gathering
+        - Better defaults (categorisation, time window, output format)
+        - New command / trigger phrase
+        - Documentation improvement
+        - Performance / context efficiency
+        - Cross-platform / portability
+        - Integration with another tool (e.g. /schedule, ce-sessions, slack-messaging)
+        - Other (specify below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: |
+        Describe the situation where current behaviour falls short. Concrete user stories beat abstract framing.
+      placeholder: |
+        Example: "When I run the rules audit on a project that uses both user-scope and project-scope rules,
+        I get good analysis of user-scope, but project-scope rules are only used for cross-pattern detection.
+        I'd like to actually clean up project-scope rules in the same workflow without switching to a different tool."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: |
+        What would you like the skill to do? Be as concrete as you can — describe the workflow, the UI, the file modifications, etc.
+      placeholder: |
+        Example: "Add a third audit half called 'project-rules audit' that:
+        - Runs after the user-scope rules audit
+        - Walks the user through each project's .claude/rules/ directory
+        - Uses the same HTML decision tool with an extra column for which project the rule belongs to
+        - Allows promotion to user-scope as a built-in action (not just a recommendation)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        Have you tried other approaches? Why don't they work? This helps avoid re-walking ground you've already covered.
+      placeholder: |
+        Example: "I tried just running the existing rules audit from inside each project directory, but that doesn't work
+        because the agents are scoped to ~/.claude/rules/ specifically. Custom-forking the skill per project is too much overhead."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: How important is this to you?
+      options:
+        - "Nice-to-have — would use it occasionally"
+        - "Worth a real audit cycle — would use it every time I audit"
+        - "Blocking — I'm not running the skill until this exists"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: example-output
+    attributes:
+      label: Example desired output
+      description: |
+        What would the markdown export, the HTML, or the chat conversation look like with this feature in place?
+        Even a sketch helps — bullet points, ASCII art, fake conversation turns.
+      placeholder: |
+        Example:
+        ```
+        After completing the user-scope rules audit, you'd see in chat:
+
+        🎯 Rules audit complete. Want to also audit project-scope rules?
+
+          mta-pt-workspace/projects/SalesMetricsDashboard (16 rules)
+          mta-pt-workspace/projects/AffiliateApp (8 rules)
+          mta-pt-workspace/projects/imageGeneration (5 rules)
+
+        Reply with which projects to audit, or 'all', or 'skip'.
+        ```
+    validations:
+      required: false
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Would you be willing to contribute this?
+      description: No pressure either way — answers help the maintainer scope the work.
+      options:
+        - "Yes — happy to PR with guidance"
+        - "Yes — PR with minimal guidance"
+        - "Maybe — depends on time / complexity"
+        - "No — I just want it to exist"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else?
+      description: Edge cases, related issues, links to similar features in other tools, dragons.
+      placeholder: |
+        Example: "Related to issue #42 (which is about settings.json audit). My proposed feature might overlap there."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Final checks
+      options:
+        - label: I've searched [existing issues](https://github.com/MJWNA/claude-config-audit/issues) and the [roadmap](https://github.com/MJWNA/claude-config-audit#-roadmap) — this isn't already requested
+          required: true
+        - label: I've read [`docs/EXTENDING.md`](https://github.com/MJWNA/claude-config-audit/blob/main/docs/EXTENDING.md) — this can't be solved by customising my own copy
+          required: true
