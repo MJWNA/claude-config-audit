@@ -6,8 +6,15 @@
   Self-contained decision UI for auditing user-scope rules under ~/.claude/rules/.
 
   HOW TO USE THIS TEMPLATE:
-  1. Locate the AUDIT_DATA_INJECTION_POINT marker in the <script> tag below
-  2. Replace the placeholder data structure with the populated arrays. Five arrays needed:
+  1. Build a JSON object with the populated arrays in the shape documented below.
+  2. Run `scripts/inject-audit-data.py <this-template> <data.json> -o rules-audit.html`
+     — that script JSON-stringifies the data and escapes the four sequences
+     unsafe in a <script> context (`<`, `</`, U+2028, U+2029) before splicing
+     it in. Do NOT hand-edit the placeholder: agent output may contain literal
+     `</script>` or line-separator characters that will break the script tag
+     if injected raw. The script is the only safe path.
+
+  Five arrays + one keyed object + an optional `securityFindings` array:
 
      existingRules: per-rule audit cards. Each item:
        {
@@ -112,6 +119,33 @@
   .rule-name { font-weight: 600; font-family: 'SF Mono', Menlo, monospace;
     font-size: 13px; flex: 1; min-width: 200px; }
   .rule-tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--bg); color: var(--muted); }
+  /* Security findings — separate UI rendered above the rest of the audit
+     (see "🔐 Security findings" section). Three decisions: fix / ack / skip. */
+  .skill-tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--bg); color: var(--muted); }
+  .label { color: var(--text); font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    display: inline-block; min-width: 110px; vertical-align: top; }
+  .security-finding { border: 1px solid var(--border); border-radius: 6px;
+    margin-bottom: 8px; background: var(--surface-2); padding: 10px 12px; }
+  .security-finding[data-severity="high"]   { border-left: 4px solid #ef4444; }
+  .security-finding[data-severity="medium"] { border-left: 4px solid #f59e0b; }
+  .security-finding[data-severity="low"]    { border-left: 4px solid #94a3b8; }
+  .security-finding[data-decision="fix"]    { background: rgba(34, 197, 94, 0.07); }
+  .security-finding[data-decision="ack"]    { background: rgba(245, 158, 11, 0.07); }
+  .security-finding[data-decision="skip"]   { background: rgba(100, 116, 139, 0.05); }
+  .severity-badge { font-size: 11px; padding: 3px 8px; border-radius: 4px;
+    font-weight: 700; letter-spacing: 0.3px; }
+  .severity-high   { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; }
+  .severity-medium { background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid #f59e0b; }
+  .severity-low    { background: rgba(148, 163, 184, 0.2); color: #94a3b8; border: 1px solid #94a3b8; }
+  .sec-decision { display: flex; gap: 4px; margin-top: 8px; }
+  .sec-decision label { cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 12px;
+    background: var(--bg); border: 1px solid var(--border); }
+  .sec-decision label:hover { background: var(--surface); }
+  .sec-decision input { display: none; }
+  .sec-decision label:has(input[value="fix"]:checked)  { background: var(--keep); color: #052e16; border-color: var(--keep); }
+  .sec-decision label:has(input[value="ack"]:checked)  { background: var(--edit); color: #451a03; border-color: var(--edit); }
+  .sec-decision label:has(input[value="skip"]:checked) { background: var(--skip); color: #f1f5f9; border-color: var(--skip); }
   .rule-tag.warn { background: #422006; color: #fbbf24; }
   .rule-tag.bug { background: #450a0a; color: #fca5a5; }
   .rule-tag.spec { background: #064e3b; color: #6ee7b7; }
@@ -206,6 +240,10 @@
     <input type="text" id="search" placeholder="🔍 Filter by name, content, or evidence..." oninput="applyFilter()">
   </div>
 
+  <h2 id="security-section-heading" style="display:none;">🔐 Security findings</h2>
+  <p id="security-section-sub" class="sub" style="display:none;">From the security-pass agent — checks for stale references to deleted skills, dangerous patterns, and any rule content that would leak credentials if shared.</p>
+  <div id="security-findings"></div>
+
   <details class="section">
     <summary>📚 1. Official Claude Code rule spec — quick reference <span class="section-meta">expand for citations + bugs</span></summary>
     <div class="section-body" id="spec-body">
@@ -244,37 +282,16 @@ const STORAGE_KEY = 'claude-rules-audit-v1';
 
 // ============================================================
 // AUDIT_DATA_INJECTION_POINT
-// Replace the placeholder structure below with your populated audit data.
-// Five arrays + one keyed object are needed. See HTML comment block at top of file for shape.
+// JSON object literal — replaced by scripts/inject-audit-data.py with the
+// populated audit data. The script JSON-encodes values and escapes <, </,
+// U+2028, U+2029. Do not replace this by hand — agent output may contain
+// literal "</script>" or line-separator characters that break the script
+// tag if injected raw. See SKILL.md "HTML template usage".
 // ============================================================
-const auditData = /* AUDIT_DATA_INJECTION_POINT */ {
-  existingRules: [
-    {
-      id: 'r-example',
-      name: 'example.md',
-      verdict: 'keep',
-      sizeLines: 30, sizeKB: '1.5KB',
-      currentFM: 'none (always-loaded)',
-      actualLoad: 'always', declaredLoad: 'always', match: true,
-      whatItDoes: 'Example rule. Replace this entire data structure with your real audit data.',
-      whenItFires: 'Always loaded.',
-      whyItExists: 'Example.',
-      withoutThisRule: 'Example.',
-      quality: 'Example.',
-      issues: 'None.',
-      actionItems: [],
-      agentReason: 'Example reasoning.'
-    }
-  ],
-  mismatches: [],
-  newRules: [],
-  extensions: [],
-  refreshes: {
-    'r-example': { value: 'low', scope: 'Example.', benefit: 'Example.' }
-  }
-};
+const auditData = /* AUDIT_DATA_INJECTION_POINT */ {"existingRules":[{"id":"r-example","name":"example.md","verdict":"keep","confidence":"medium","sizeLines":30,"sizeKB":"1.5KB","currentFM":"none (always-loaded)","actualLoad":"always","declaredLoad":"always","match":true,"whatItDoes":"Example rule. Replace this entire data structure via scripts/inject-audit-data.py.","whenItFires":"Always loaded.","whyItExists":"Example.","withoutThisRule":"Example.","quality":"Example.","issues":"None.","actionItems":[],"agentReason":"Example reasoning."}],"mismatches":[],"newRules":[],"extensions":[],"refreshes":{"r-example":{"value":"low","scope":"Example.","benefit":"Example."}},"securityFindings":[]};
 
 const { existingRules, mismatches, newRules, extensions, refreshes } = auditData;
+const securityFindings = auditData.securityFindings || [];
 
 let state = {};
 try { state = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch(e) { state = {}; }
@@ -283,6 +300,18 @@ function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 function setDecision(id, decision) { if (!state[id]) state[id] = {}; state[id].decision = decision; saveState();
   document.querySelector(`[data-id="${id}"]`).setAttribute('data-decision', decision); }
 function setNote(id, note) { if (!state[id]) state[id] = {}; state[id].note = note; saveState(); }
+function setSecurityDecision(id, decision) {
+  if (!state[id]) state[id] = {};
+  state[id].decision = decision;
+  saveState();
+  const el = document.querySelector(`[data-sec-id="${id}"]`);
+  if (el) el.setAttribute('data-decision', decision);
+}
+function setSecurityNote(id, note) {
+  if (!state[id]) state[id] = {};
+  state[id].note = note;
+  saveState();
+}
 function toggleRule(id) { const el = document.querySelector(`[data-id="${id}"]`);
   el.setAttribute('data-open', el.getAttribute('data-open') === 'true' ? 'false' : 'true'); }
 function applyAgentVerdicts() {
@@ -533,6 +562,48 @@ function renderExtension(e) {
     </div></div>`;
 }
 
+function renderSecurityFindings() {
+  const host = document.getElementById('security-findings');
+  const heading = document.getElementById('security-section-heading');
+  const sub = document.getElementById('security-section-sub');
+  if (!securityFindings || !securityFindings.length) {
+    host.innerHTML = '';
+    if (heading) heading.style.display = 'none';
+    if (sub) sub.style.display = 'none';
+    return;
+  }
+  if (heading) heading.style.display = '';
+  if (sub) sub.style.display = '';
+  const order = { high: 0, medium: 1, low: 2 };
+  const sorted = [...securityFindings].sort((a, b) =>
+    (order[a.severity] ?? 3) - (order[b.severity] ?? 3));
+  host.innerHTML = sorted.map(f => {
+    const s = state[f.id] || {};
+    const safeId = encodeURIComponent(f.id);
+    const sev = ['high', 'medium', 'low'].includes(f.severity) ? f.severity : 'low';
+    const verdict = ['fix', 'ack', 'skip'].includes(f.verdict) ? f.verdict : 'ack';
+    const labels = { fix: '🛠️ fix now', ack: '👁️ acknowledge', skip: '➖ skip' };
+    const decisionHtml = ['fix', 'ack', 'skip'].map(d => {
+      const checked = (s.decision || verdict) === d ? 'checked' : '';
+      return `<label><input type="radio" name="sec-${escapeHtml(safeId)}" value="${d}" ${checked} onchange="setSecurityDecision('${escapeHtml(safeId)}','${d}')"><span>${labels[d]}</span></label>`;
+    }).join('');
+    return `<div class="security-finding" data-sec-id="${escapeHtml(f.id)}" data-severity="${sev}"${s.decision ? ` data-decision="${s.decision}"` : ''}>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <span class="severity-badge severity-${sev}">${sev.toUpperCase()}</span>
+        ${f.category ? `<span class="skill-tag">${escapeHtml(f.category)}</span>` : ''}
+        <span style="font-weight:600; flex:1; min-width:200px;">${escapeHtml(f.title)}</span>
+      </div>
+      ${f.file ? `<p><span class="label">File:</span> <code>${escapeHtml(f.file)}${f.line ? ':' + f.line : ''}</code></p>` : ''}
+      ${f.evidence ? `<p><span class="label">Evidence:</span> <code>${escapeHtml(f.evidence)}</code></p>` : ''}
+      ${f.why ? `<p><span class="label">Why it matters:</span> ${escapeHtml(f.why)}</p>` : ''}
+      ${f.fix ? `<p><span class="label">Suggested fix:</span> ${escapeHtml(f.fix)}</p>` : ''}
+      <div class="sec-decision">${decisionHtml}</div>
+      <textarea class="note" placeholder="Notes..." onchange="setSecurityNote('${escapeHtml(safeId)}', this.value)">${escapeHtml(s.note)}</textarea>
+    </div>`;
+  }).join('');
+}
+
+renderSecurityFindings();
 document.getElementById('existing-rules').innerHTML = existingRules.map(renderExistingRule).join('');
 document.getElementById('mismatches').innerHTML = mismatches.map(renderMismatch).join('');
 document.getElementById('new-rules').innerHTML = newRules.map(renderNewRule).join('');

@@ -56,6 +56,14 @@ git clone https://github.com/MJWNA/claude-config-audit.git ~/.claude/plugins/cac
 # Then register in ~/.claude/plugins/installed_plugins.json
 ```
 
+To test a local checkout without registering it as a permanent install:
+
+```bash
+claude --plugin-dir /path/to/claude-config-audit
+```
+
+Inside the slash commands, the skill is located via `${CLAUDE_PLUGIN_ROOT}` (set automatically by Claude Code), with a fallback to `~/.claude/skills/claude-config-audit/` for standalone-skill installs. No path inside this repo assumes a specific cwd or marketplace name — it works regardless of where the plugin is mounted.
+
 Or as a standalone skill:
 
 ```bash

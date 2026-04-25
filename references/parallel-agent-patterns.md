@@ -33,6 +33,16 @@ Discover what's available by checking the Agent tool's enum at runtime, NOT by h
 
 ## Skills audit prompt template
 
+Before dispatching the agents, run the deterministic counter once and pass the JSON to every bucket agent:
+
+```bash
+SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/claude-config-audit}"
+python3 "$SKILL_DIR/scripts/analyze-session-history.py" --window-days 90 \
+  > /tmp/session-counts.json
+```
+
+The script counts: tool_use blocks where `name=="Skill"` and `input.skill==<name>`, user messages containing `<command-name>/<name></command-name>` tags, and (optionally, via `--bash-pattern`) Bash invocations matching configurable regex patterns. It deliberately ignores skill registry mentions in system reminders and any string that isn't a real invocation. Agents interpret these counts; they do not invent them.
+
 ```
 You are auditing usage patterns in <USER>'s Claude Code session history to inform a skills/plugins audit.
 
@@ -40,32 +50,38 @@ CONTEXT:
 - The user runs <BUSINESSES / PROJECTS — 1-2 sentences from discovery>
 - Main projects: <list from CLAUDE.md or workspace>
 
-Search Claude Code session history (and Codex/Cursor if relevant) for evidence of usage of these <N> <plugins | standalone skills>. Cover the last 90 days.
+DETERMINISTIC INVOCATION COUNTS:
+Read `/tmp/session-counts.json`. The shape is:
+  { "skills": { "<name>": { "count": N, "lastSeen": "...", "byDay": {...} } },
+    "slashCommands": { ... }, "bashPatterns": { ... } }
+These counts were produced by `scripts/analyze-session-history.py` over the
+last 90 days of session JSONL. They are authoritative — do not re-grep the
+JSONL to "verify"; do not produce a count that disagrees with the JSON.
 
 ITEMS TO AUDIT:
-1. **<item-name>** — <one-line description from SKILL.md or plugin.json>. Look for: <specific tool/command names to grep for>.
+1. **<item-name>** — <one-line description from SKILL.md or plugin.json>. Look up its count in: skills["<name>"], slashCommands["<command>"], bashPatterns["<label>"].
 2. **<item-name>** — ...
 [N items total]
 
-CRITICAL: Count REAL invocations only.
-- Formal `Skill` tool calls (`"skill":"<name>"` in tool_use blocks)
-- User-typed slash commands (`<command-name>/<name></command-name>` user message tags)
-- Underlying script Bash calls if applicable
-
-DO NOT count:
-- Skill descriptions appearing in `<system-reminder>` skill registries (they appear in every recent session)
-- Mentions of the item in user prompts that don't actually trigger it
+YOUR JOB: interpret the counts, don't invent them.
+- Use `count` and `lastSeen` from the JSON, verbatim.
+- If an item has zero count, say so plainly — don't pad with "you may use it sometimes".
+- Look at `byDay` to spot patterns (used heavily then dropped, or used recently after a long gap, etc).
+- For overlap analysis (where two tools do similar work), compare their counts and tell the user which one they actually use.
 
 For EACH item, report:
-- **Usage frequency**: Never / Rarely (1-3) / Occasionally (4-10) / Often (10+) / Constant — based on actual session evidence
-- **Most recent invocation**: date if found
-- **Evidence**: 1-2 concrete quotes/examples from sessions
-- **Overlap analysis**: where it competes with another tool, which one the user actually uses
-- **Recommendation**: KEEP / DELETE / MAYBE with one-sentence reasoning
+- **Usage frequency**: Never / Rarely (1-3) / Occasionally (4-10) / Often (10+) / Constant — based on the JSON count, not your impression
+- **Most recent invocation**: from `lastSeen` (if present)
+- **Pattern over time**: 1 sentence on `byDay` (e.g. "ramped through April, none since 04-10")
+- **Overlap analysis**: where it competes with another tool, which one the user actually uses (compare counts)
+- **Recommendation**: KEEP / DELETE / MAYBE with one-sentence reasoning grounded in the count
 
 Format as structured markdown sections per item. Be honest — if you find no evidence, say so plainly. Don't pad.
 
-Search session storage at typical Claude Code locations: ~/.claude/projects/, ~/Library/Caches/claude-cli-nodejs/. Also check Codex (~/.codex/) and Cursor (~/.cursor/projects/) if they exist.
+DO NOT:
+- Re-run `grep` against `~/.claude/projects/*.jsonl` to "double-check" the counts. If the JSON is wrong, that's a bug for the analyzer to fix, not for you to paper over.
+- Count skill registry mentions or system-reminder appearances. The analyzer already filters those.
+- Invent counts the JSON doesn't contain. If a skill isn't in the JSON, its count is zero.
 ```
 
 ## Rules audit prompt templates

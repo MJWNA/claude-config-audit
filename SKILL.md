@@ -99,15 +99,23 @@ Two production-ready HTML templates ship with this skill:
 
 Each is a self-contained single-file app with localStorage persistence, a sticky toolbar, expandable rule cards, decision radio buttons, mismatch filtering, and markdown export. You do NOT write your own HTML — copy these to the user's workspace and inject the audit data.
 
-**Injection points:** Each template has a single placeholder near the top of the script section:
+**Injection mechanism:** Each template contains a JSON-shaped placeholder near the top of the script section. **Always splice via `scripts/inject-audit-data.py` — never by hand.** Agent output may legitimately contain `</script>` strings or U+2028/U+2029 line-separator characters that break a `<script>` tag if injected raw; the script JSON-stringifies the data and escapes those four sequences.
 
-```js
-const data = /* AUDIT_DATA_INJECTION_POINT */ [];
+```bash
+SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/claude-config-audit}"
+DATA_PATH="$(mktemp /tmp/audit-data.XXXXXX).json"
+# Write the populated audit data as JSON to $DATA_PATH using the shape
+# documented in the corresponding template file.
+
+python3 "$SKILL_DIR/scripts/inject-audit-data.py" \
+  "$SKILL_DIR/assets/skills-audit-template.html" \
+  "$DATA_PATH" \
+  -o "$PWD/skills-audit.html"
 ```
 
-Replace `[]` with the JavaScript array of audit items built from the parallel-agent findings. The shape of each item is documented at the top of the template file. Keep the rest of the template untouched — the CSS, layout, and interaction logic don't need per-user customisation.
+The shape of each item is documented at the top of the template file. The rest of the template (CSS, layout, render code) does not need per-user customisation.
 
-After injecting the data, save the populated HTML to the user's CWD as `skills-audit.html` or `rules-audit.html` and tell them to run:
+After injecting, tell the user to run:
 
 ```bash
 open ./skills-audit.html
