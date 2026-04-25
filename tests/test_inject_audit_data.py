@@ -43,6 +43,92 @@ class TestSafeJsonForScript(unittest.TestCase):
         self.assertNotIn("</script>", out)
         self.assertNotIn("</", out)
 
+
+class TestSecretRedaction(unittest.TestCase):
+    """v2.3 added a defence-in-depth secret scrubber to safe_json_for_script.
+
+    The security-pass agent prompt asks for fingerprinted evidence (e.g.
+    `OPENAI_API_KEY=***[redacted, 132 chars]`), but a misbehaving agent
+    might still paste the raw value into the `evidence`/`why`/`fix` fields.
+    Without this layer, raw secrets would land in the rendered HTML, the
+    markdown export, and the audit-history file. These tests assert the
+    scrubber catches the formats most likely to be misembedded.
+    """
+
+    def setUp(self) -> None:
+        self.mod = load_inject_module()
+
+    # Fixtures are built up by string concatenation so the source file
+    # itself doesn't contain a literal that matches GitHub's secret-scanning
+    # patterns. The runtime values are still complete enough to exercise
+    # _redact_string correctly.
+    def _fake_secret(self, prefix: str, body_len: int = 24) -> str:
+        # Body is a deterministic non-secret pattern; "x"*body_len is a
+        # legitimate secret-shape but contains no real entropy.
+        return prefix + ("x" * body_len)
+
+    def test_openai_sk_proj_key_redacted(self):
+        secret = self._fake_secret("sk" + "-proj-")
+        s = f"evidence: OPENAI_API_KEY={secret}"
+        out = self.mod._redact_string(s)
+        self.assertIn("sk-proj-***[redacted", out)
+        self.assertNotIn("xxxxxxxxxxxxxxxxxxxxxxxx", out)
+
+    def test_github_pat_redacted(self):
+        secret = self._fake_secret("ghp" + "_", body_len=36)
+        s = f"GITHUB_TOKEN={secret}"
+        out = self.mod._redact_string(s)
+        self.assertIn("ghp_***[redacted", out)
+
+    def test_slack_bot_token_redacted(self):
+        # Avoid a literal `xoxb-...` in source — split prefix + assembled body
+        # so secret scanners don't pattern-match against this test fixture.
+        prefix = "xo" + "xb-"
+        body = "1234567890-" + ("a" * 20)
+        s = f"Slack: {prefix}{body}"
+        out = self.mod._redact_string(s)
+        self.assertIn("xoxb-***[redacted", out)
+
+    def test_google_api_key_redacted(self):
+        prefix = "AI" + "za"
+        body = "B" * 35
+        s = f"{prefix}{body}"
+        out = self.mod._redact_string(s)
+        self.assertIn("AIza***[redacted", out)
+
+    def test_generic_password_assignment_redacted(self):
+        s = "PASSWORD=hunter2isnotenoughchars"
+        out = self.mod._redact_string(s)
+        self.assertIn("PASSWORD=***[redacted", out)
+
+    def test_innocuous_text_unchanged(self):
+        s = "this skill has not been invoked in the last 90 days"
+        self.assertEqual(self.mod._redact_string(s), s)
+
+    def test_redaction_is_idempotent(self):
+        # Re-running the scrubber on already-redacted text must not produce
+        # `[redacted, [redacted, N chars]` etc.
+        s = "key=***[redacted, 24 chars]"
+        self.assertEqual(self.mod._redact_string(s), s)
+
+    def test_secrets_redacted_through_inject_pipeline(self):
+        # End-to-end: a secret inside an audit-data string lands in the
+        # rendered HTML as a redaction marker, not as the literal value.
+        # Build the secret-shape from parts so secret scanners don't
+        # pattern-match against the test source.
+        secret = "sk" + "-proj-" + ("a" * 20)
+        payload = {"securityFindings": [{
+            "id": "sf-1",
+            "severity": "high",
+            "title": "OpenAI key in settings.json",
+            "evidence": f"OPENAI_API_KEY={secret}",
+            "why": "x", "fix": "y", "verdict": "fix",
+        }], "sections": []}
+        out = self.mod.safe_json_for_script(payload)
+        # The fully-assembled secret string must not appear in output.
+        self.assertNotIn(secret, out)
+        self.assertIn("redacted", out)
+
     def test_escapes_open_angle_bracket(self):
         out = self.mod.safe_json_for_script(["<img src=x onerror=alert(1)>"])
         self.assertNotIn("<img", out)

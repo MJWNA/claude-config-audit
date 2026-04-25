@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-7c3aed.svg)](https://docs.claude.com/en/docs/claude-code)
-[![Version](https://img.shields.io/badge/Version-2.2.0-22c55e.svg)]()
+[![Version](https://img.shields.io/badge/Version-2.3.0-22c55e.svg)]()
 [![CI](https://github.com/MJWNA/claude-config-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/MJWNA/claude-config-audit/actions/workflows/ci.yml)
 
 A Claude Code skill + plugin that scans your installation, dispatches parallel sub-agents to evaluate usage from your own session history, generates two interactive HTML decision tools, and safely executes the cleanup you choose — with quarantine-based reversibility and decision memory across runs.

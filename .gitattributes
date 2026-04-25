@@ -1,0 +1,20 @@
+# Default to LF for everything text — Windows checkouts otherwise convert
+# .sh files to CRLF, which breaks `#!/usr/bin/env bash\r` (kernel can't find
+# the interpreter) and `case $cmd in init)` (init$'\r' never matches).
+* text=auto eol=lf
+
+# Explicit per-extension overrides for the formats this repo actually ships.
+# These guarantee LF even if a contributor has core.autocrlf=true globally.
+*.sh    text eol=lf
+*.py    text eol=lf
+*.json  text eol=lf
+*.html  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Binary files — never normalise, never diff.
+*.png   binary
+*.gif   binary
+*.jpg   binary
+*.jpeg  binary

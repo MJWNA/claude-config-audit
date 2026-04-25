@@ -70,5 +70,42 @@ touch -t 200001010000 "$SESSION2"
 CLAUDE_CONFIG_AUDIT_TTL_DAYS=1 bash "$REPO_ROOT/scripts/quarantine.sh" purge >/dev/null
 [ ! -d "$SESSION2" ] || { echo "FAIL: purge didn't remove old session"; exit 1; }
 
+echo "10. v2.3 fix — name with '--' round-trips correctly"
+# Pre-v2.3, the flatten/unflatten encoding (s|/|--|g) was lossy: a skill
+# named foo--bar restored as foo/bar/. Now restore reads the .meta.json
+# sidecar with the absolute original path, so the round-trip is exact
+# regardless of what's in the filename.
+mkdir -p "$HOME/.claude/skills/foo--bar/sub-rule"
+echo "edge content" > "$HOME/.claude/skills/foo--bar/sub-rule/data.txt"
+SESSION3="$(bash "$REPO_ROOT/scripts/quarantine.sh" init)"
+bash "$REPO_ROOT/scripts/quarantine.sh" add "$SESSION3" "$HOME/.claude/skills/foo--bar"
+[ ! -d "$HOME/.claude/skills/foo--bar" ] || { echo "FAIL: foo--bar not moved"; exit 1; }
+bash "$REPO_ROOT/scripts/restore.sh" "$SESSION3" >/dev/null
+[ -f "$HOME/.claude/skills/foo--bar/sub-rule/data.txt" ] || \
+  { echo "FAIL: foo--bar restored to wrong path"; find "$HOME/.claude" -type f; exit 1; }
+[ ! -d "$HOME/.claude/skills/foo/bar" ] || \
+  { echo "FAIL: foo--bar restored as foo/bar (the v2.2 bug returned)"; exit 1; }
+
+echo "11. v2.3 fix — init produces unique paths in same second"
+# Pre-v2.2, two init calls in the same second collided and silently shared
+# state. v2.2 added mktemp -d -XXXXXX to fix this. Regression test asserts
+# 5 rapid init calls produce 5 distinct paths.
+PATHS=()
+for i in 1 2 3 4 5; do
+  PATHS+=("$(bash "$REPO_ROOT/scripts/quarantine.sh" init)")
+done
+UNIQUE_COUNT=$(printf '%s\n' "${PATHS[@]}" | sort -u | wc -l | tr -d ' ')
+[ "$UNIQUE_COUNT" = "5" ] || \
+  { echo "FAIL: 5 init calls produced $UNIQUE_COUNT unique paths"; printf '%s\n' "${PATHS[@]}"; exit 1; }
+
+echo "12. v2.3 fix — unknown command exits non-zero"
+# Pre-v2.3, `quarantine.sh ad <session> <path>` (typo'd verb) hit the
+# `help|*)` arm, printed usage, and exited 0 — an automation pipeline
+# would proceed under the false impression the operation succeeded.
+if bash "$REPO_ROOT/scripts/quarantine.sh" definitelynotacommand 2>/dev/null; then
+  echo "FAIL: unknown command exited 0; should be non-zero"
+  exit 1
+fi
+
 echo
-echo "PASS: quarantine roundtrip + boundary checks"
+echo "PASS: quarantine roundtrip + boundary checks + v2.3 fixes"
