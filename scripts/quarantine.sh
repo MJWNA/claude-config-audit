@@ -26,7 +26,11 @@
 #     skills--meta-ads-expert/             (directory-level move from ~/.claude/skills/)
 #     plugins--cache--marketplace--name--version/  (directory-level move from cache)
 
-set -eu
+# pipefail propagates errors through pipelines so `find ... | wc -l` failing on
+# a permission error or aborted process stays visible instead of silently
+# emitting 0. Without this a deep-permissions issue mid-discovery would let the
+# script continue under bad data.
+set -euo pipefail
 
 CLAUDE_DIR="${HOME}/.claude"
 QUARANTINE_BASE="${CLAUDE_DIR}/.audit-quarantine"
@@ -87,6 +91,20 @@ case "$cmd" in
     esac
 
     target="${session}/$(flatten_path "$src")"
+    # Collision check: the flatten_path encoding is lossy in the rare case where
+    # two distinct source paths produce the same flattened name. Example:
+    # `~/.claude/rules/foo--bar.md` and `~/.claude/rules/foo/bar.md` both flatten
+    # to `rules--foo--bar.md`. Without this check, the second `mv` would either
+    # silently overwrite the first file (mv-over-file is destructive) or fail
+    # mid-operation for directories (mv-over-non-empty-dir errors). The
+    # `.meta.json` sidecar makes restore exact, but only if both items are
+    # actually preserved in the session — we have to disambiguate the on-disk
+    # name. Append a short hash of the original source path for collisions only,
+    # so the common no-collision case keeps the human-readable flattened name.
+    if [ -e "$target" ] || [ -e "${target}.meta.json" ]; then
+      hash=$(printf '%s' "$src" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.read().encode()).hexdigest()[:8])')
+      target="${target}--${hash}"
+    fi
     # `mv` for skill dirs and cache dirs (we want them gone from ~/.claude/).
     # `cp -R` for files we're backing up but leaving in place (manifest, rules
     # files, CLAUDE.md). The caller decides which by passing --copy.

@@ -41,7 +41,7 @@ body:
         - "Phase 6 — HTML rendering / interaction in browser"
         - "Phase 7 — Receiving the markdown export"
         - "Phase 8 — Confirming the deletion plan"
-        - "Phase 9 — Execution (manifest edits / rm -rf / file edits)"
+        - "Phase 9 — Execution (manifest edits / quarantine moves / file edits)"
         - "Phase 10 — Verification / restart prompt"
         - Not sure / the phase wasn't visible
     validations:
@@ -130,11 +130,12 @@ body:
     id: data-loss
     attributes:
       label: Did the bug cause data loss?
-      description: Be specific — this affects priority. (Reminder — backups are at `~/.claude/plugins/installed_plugins.json.bak` if you ran the skills half.)
+      description: |
+        Be specific — this affects priority. (Reminder — every audit run leaves a quarantine snapshot at `~/.claude/.audit-quarantine/<session>/` for 7 days. Run `bash scripts/quarantine.sh list` to find recent sessions, then `bash scripts/restore.sh <session>` to roll back.)
       options:
         - "No — bug occurred before any destructive action"
         - "No — bug occurred but no data was modified"
-        - "Yes — but I restored from the .bak file"
+        - "Yes — but I restored from the quarantine session"
         - "Yes — and I couldn't recover (please describe)"
         - Not sure
     validations:

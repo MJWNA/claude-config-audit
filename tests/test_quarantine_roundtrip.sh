@@ -108,5 +108,55 @@ if bash "$REPO_ROOT/scripts/quarantine.sh" definitelynotacommand 2>/dev/null; th
   exit 1
 fi
 
+echo "13. v2.3.1 fix — flatten collision preserves both items"
+# Pre-v2.3.1, two distinct source paths that flatten to the same name (e.g.
+# `~/.claude/rules/foo--bar.md` and `~/.claude/rules/foo/bar.md` both flatten
+# to `rules--foo--bar.md`) would silently overwrite each other in quarantine.
+# The .meta.json sidecar made restore exact, but only if both items survived
+# the on-disk write. Now we detect the collision and append a short hash so
+# both items are preserved.
+mkdir -p "$HOME/.claude/rules/foo"
+echo "i am foo--bar.md" > "$HOME/.claude/rules/foo--bar.md"
+echo "i am foo/bar.md"  > "$HOME/.claude/rules/foo/bar.md"
+SESSION4="$(bash "$REPO_ROOT/scripts/quarantine.sh" init)"
+bash "$REPO_ROOT/scripts/quarantine.sh" add "$SESSION4" "$HOME/.claude/rules/foo--bar.md"
+bash "$REPO_ROOT/scripts/quarantine.sh" add "$SESSION4" "$HOME/.claude/rules/foo/bar.md"
+ITEMS_IN_SESSION=$(find "$SESSION4" -mindepth 1 -maxdepth 1 -not -name 'MANIFEST.md' -not -name '*.meta.json' -type f | wc -l | tr -d ' ')
+[ "$ITEMS_IN_SESSION" = "2" ] || \
+  { echo "FAIL: collision should have produced 2 items, got $ITEMS_IN_SESSION"; ls "$SESSION4"; exit 1; }
+# Restore them both — destinations are clear because we moved both files out.
+bash "$REPO_ROOT/scripts/restore.sh" "$SESSION4" >/dev/null
+[ "$(cat "$HOME/.claude/rules/foo--bar.md" 2>/dev/null)" = "i am foo--bar.md" ] || \
+  { echo "FAIL: foo--bar.md not restored correctly"; exit 1; }
+[ "$(cat "$HOME/.claude/rules/foo/bar.md" 2>/dev/null)" = "i am foo/bar.md" ] || \
+  { echo "FAIL: foo/bar.md not restored correctly"; exit 1; }
+
+echo "14. v2.3.1 fix — restore handles single-quote in original path"
+# Pre-v2.3.1, restore.sh interpolated the meta-file path into a python -c
+# string with single quotes: `python3 -c "...open('$meta')..."`. A path
+# containing a single quote (legitimate filename, or maliciously crafted)
+# would either break the parse or, in a worst case, execute attacker-chosen
+# Python. The fix passes the meta path via argv. This test plants a sidecar
+# whose `originalPath` field describes a path with a single quote, and
+# verifies restore reads it correctly without barfing.
+SESSION5="$(bash "$REPO_ROOT/scripts/quarantine.sh" init)"
+mkdir -p "$HOME/.claude/quirky"
+# A real file lives in quarantine; the sidecar describes a target path
+# containing a single quote. This exercises the python json.load path.
+echo "quoted content" > "$SESSION5/quirky-item"
+target_path="$HOME/.claude/quirky/it's-fine.md"
+python3 -c "
+import json, sys
+meta_path = sys.argv[1]
+target = sys.argv[2]
+with open(meta_path, 'w') as f:
+    json.dump({'originalPath': target, 'mode': 'move', 'quarantinedAt': '2026-04-26T00:00:00Z'}, f)
+" "$SESSION5/quirky-item.meta.json" "$target_path"
+# Restore: the script must read the sidecar via argv, not via shell
+# interpolation, so the single quote in the JSON stays a literal.
+bash "$REPO_ROOT/scripts/restore.sh" "$SESSION5" >/dev/null
+[ -f "$target_path" ] || { echo "FAIL: single-quote-named restore failed"; ls "$HOME/.claude/quirky/"; exit 1; }
+[ "$(cat "$target_path")" = "quoted content" ] || { echo "FAIL: single-quote-named content corrupted"; exit 1; }
+
 echo
-echo "PASS: quarantine roundtrip + boundary checks + v2.3 fixes"
+echo "PASS: quarantine roundtrip + boundary checks + v2.3 + v2.3.1 fixes"

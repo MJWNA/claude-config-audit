@@ -9,7 +9,12 @@
 # Output is consumed by the skill to build agent prompts. Cross-platform:
 # tested on macOS (BSD coreutils) and Linux (GNU coreutils).
 
-set -u
+# Deliberately not -e: discover-config emits findings as it walks (the agents
+# downstream tolerate missing surfaces — empty rules, no plugins, etc.) and
+# treats absence as data, not an error. pipefail catches the cases where a
+# pipeline like `find ... | wc -l` would silently return 0 on a permission
+# error mid-walk.
+set -uo pipefail
 
 CLAUDE_DIR="$HOME/.claude"
 INCLUDE_PROJECT=false

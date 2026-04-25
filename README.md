@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-7c3aed.svg)](https://docs.claude.com/en/docs/claude-code)
-[![Version](https://img.shields.io/badge/Version-2.3.0-22c55e.svg)]()
+[![Version](https://img.shields.io/badge/Version-2.3.1-22c55e.svg)]()
 [![CI](https://github.com/MJWNA/claude-config-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/MJWNA/claude-config-audit/actions/workflows/ci.yml)
 
 A Claude Code skill + plugin that scans your installation, dispatches parallel sub-agents to evaluate usage from your own session history, generates two interactive HTML decision tools, and safely executes the cleanup you choose — with quarantine-based reversibility and decision memory across runs.
@@ -52,18 +52,18 @@ When you run this skill, by the end of the session you have:
 
 **As a plugin (recommended — gets you `/audit-skills` and `/audit-rules` slash commands plus plain-language triggering):**
 
-Add the repository as a Claude Code marketplace, then install:
+Add the repository as a Claude Code marketplace, then install. The install identifier is `<plugin-name>@<marketplace-name>`; both are `claude-config-audit` for this repo (the marketplace ships a single plugin of the same name).
 
 ```text
 /plugin marketplace add MJWNA/claude-config-audit
-/plugin install claude-config-audit@MJWNA
+/plugin install claude-config-audit@claude-config-audit
 ```
 
 Or from the CLI:
 
 ```bash
 claude plugin marketplace add MJWNA/claude-config-audit
-claude plugin install claude-config-audit@MJWNA
+claude plugin install claude-config-audit@claude-config-audit
 ```
 
 To test a local checkout without registering it as a permanent install:
@@ -531,6 +531,7 @@ The skill is intentionally opinionated about workflow but flexible about content
 
 ## 🙋 Common gotchas
 
+- **Windows users — read [`docs/WINDOWS.md`](docs/WINDOWS.md) first.** TL;DR: use WSL2. Native Windows works for `/plugin install` and the browser HTML, but the destructive scripts need a POSIX shell, and the plugin layout uses git symlinks that need Developer Mode + `core.symlinks=true` to materialise correctly. WSL2 sidesteps both.
 - **`~/.claude/skills/` vs `~/.claude/plugins/installed/`** — older Claude Code versions used the latter. As of CC 1.x, standalone skills live at `~/.claude/skills/`. The skill verifies paths before operating, but you may see references to the older path in third-party docs.
 - **Restart required after plugin changes** — the manifest is read at session start. Changes don't take effect until you fully quit and relaunch Claude Code.
 - **Description field in rule frontmatter** — per the official spec, rules don't support `description:` (that's a skills-only field). It's silently ignored. The audit catches this and tells you, but doesn't fix it automatically (cosmetic).

@@ -65,11 +65,16 @@ _SECRET_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(sk_live_|rk_live_|sk_test_)[A-Za-z0-9]{20,}\b"), r"\1"),
     (re.compile(r"\b(AKIA|ASIA)[A-Z0-9]{16,}\b"), r"\1"),
     # Generic key=value pattern: TOKEN=, SECRET=, API_KEY=, PASSWORD=,
-    # CREDENTIAL=, AUTH= followed by 12+ non-whitespace chars. Catches
-    # arbitrary providers and the env-block format common in settings.json.
+    # CREDENTIAL=, AUTH= followed by 12+ non-whitespace chars. Targets the
+    # env-block format common in settings.json and shell-style secret leaks.
+    # Uses `=` only (not `:`), since markdown/YAML colons cause false positives
+    # in legitimate prose like "the api_key: documentation" — no real env-shaped
+    # secret leak uses `:` separator. Excludes template placeholders (`<...>`,
+    # `{{...}}`, `${...}`) so doc examples like `KEY=<your-token-here>` don't
+    # get redacted.
     (
         re.compile(
-            r"(?i)\b((?:api[_\-]?)?(?:token|secret|key|password|credential|auth)\s*[=:]\s*[\"\']?)([^\s\"\']{12,})",
+            r"(?i)\b((?:api[_\-]?)?(?:token|secret|key|password|credential|auth)\s*=\s*[\"\']?)([^\s\"\'<{$][^\s\"\']{11,})",
         ),
         r"\1",
     ),
