@@ -81,7 +81,22 @@ See `assets/rules-audit-template.html` for the full data shape.
 
 ## Phase 4 — Build HTML
 
-Read the rules-audit-template.html, replace the data injection point, write to user's CWD as `rules-audit.html`. Tell them to open it.
+Use the inject script to splice the populated audit data into the template. Never hand-edit the placeholder — agent output (rule contents, quoted evidence, action items) may legitimately contain `</script>` strings or U+2028/U+2029 characters that will break the script tag if injected raw. The script JSON-stringifies the data and escapes those four sequences.
+
+```bash
+SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/claude-config-audit}"
+DATA_PATH="$(mktemp /tmp/rules-audit.XXXXXX).json"
+# write the populated JSON to $DATA_PATH (object with keys
+# existingRules, mismatches, newRules, extensions, refreshes,
+# and optionally securityFindings)
+
+python3 "$SKILL_DIR/scripts/inject-audit-data.py" \
+  "$SKILL_DIR/assets/rules-audit-template.html" \
+  "$DATA_PATH" \
+  -o "$PWD/rules-audit.html"
+```
+
+Tell the user to open `rules-audit.html`.
 
 The HTML has 5 sections — make sure all 5 are populated even if some are short:
 

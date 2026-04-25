@@ -1,6 +1,6 @@
 {
   "name": "claude-config-audit",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Audit and clean up your Claude Code installation. Evidence-based: scans your actual session history, builds an interactive HTML decision tool, executes safely with quarantine.",
   "author": {
     "name": "MJWNA"

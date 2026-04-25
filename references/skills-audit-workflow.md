@@ -85,19 +85,24 @@ When agents return:
 }
 ```
 
-2. Read the HTML template:
+2. Write the populated audit data as JSON. The shape is either a bare array of section objects, or an object with `sections` and an optional `securityFindings` array (see `assets/skills-audit-template.html` for the documented schema):
 
 ```bash
-cat <skill-dir>/assets/skills-audit-template.html
+SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/claude-config-audit}"
+DATA_PATH="$(mktemp /tmp/skills-audit.XXXXXX).json"
+# write the populated JSON to $DATA_PATH using your favourite tool
 ```
 
-3. Replace the `/* AUDIT_DATA_INJECTION_POINT */ []` placeholder with the populated array (everything from `[` to `]` — replace the example data, keep the comment)
+3. Inject it via `scripts/inject-audit-data.py` — never replace the placeholder by hand. Agent output may legitimately contain `</script>` strings or U+2028/U+2029 line-separator characters that break the script tag if injected raw. The script JSON-stringifies the data and escapes those four sequences.
 
-4. Write the populated HTML to the user's CWD:
+```bash
+python3 "$SKILL_DIR/scripts/inject-audit-data.py" \
+  "$SKILL_DIR/assets/skills-audit-template.html" \
+  "$DATA_PATH" \
+  -o "$PWD/skills-audit.html"
+```
 
-```
-<user-cwd>/skills-audit.html
-```
+4. The populated HTML is now at `<user-cwd>/skills-audit.html`.
 
 5. Tell the user:
 
@@ -123,13 +128,15 @@ Note the `## ⚠️ Where I overrode the agent` section if present — those ove
 Before any destructive action, summarise concisely:
 
 ```
-🗑️ X plugins to delete (manifest edit + cache rm):
+🗑️ X plugins to remove (manifest edit + quarantine cache dirs):
   - plugin-a, plugin-b, plugin-c, ...
 
-🗑️ Y standalone skills to delete (rm -rf):
+🗑️ Y standalone skills to remove (quarantine via mv, not rm):
   - skill-a, skill-b, ...
 
-📦 Backup will be: ~/.claude/plugins/installed_plugins.json.bak
+📦 Quarantine session: ~/.claude/.audit-quarantine/<ISO-timestamp>/
+   • 7-day TTL, one-line restore, manifest written automatically
+   • Manifest snapshot of installed_plugins.json lives inside the session
 
 Reply 'go' (or 'go + <override>') to execute.
 ```
@@ -138,34 +145,62 @@ Do NOT proceed without explicit confirmation — even in auto mode, the destruct
 
 ## Phase 7 — Execute safely
 
+> **NEVER `rm -rf` anything under `~/.claude/`.** Every removal is a `mv` into a quarantine session. The user gets a 7-day TTL and a one-line restore. This is non-negotiable — `safety-protocol.md` and the `quarantine.sh` script enforce it. If a previous version of this document showed `rm -rf` as the canonical sequence, that guidance was wrong; this is the only correct sequence.
+
 Follow `safety-protocol.md`. The canonical sequence:
 
 ```bash
-# 1. Backup
-cp ~/.claude/plugins/installed_plugins.json ~/.claude/plugins/installed_plugins.json.bak
+SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/claude-config-audit}"
 
-# 2. Edit the manifest via Python (atomic, preserves all unrelated keys)
-python3 <<PYEOF
-import json
-path = '/Users/<user>/.claude/plugins/installed_plugins.json'
+# 1. Open a quarantine session — every change in this audit lands here.
+SESSION=$(bash "$SKILL_DIR/scripts/quarantine.sh" init)
+echo "Quarantine session: $SESSION"
+
+# 2. Snapshot the manifest into the session (copy, not move — we still need it
+#    to edit). The --copy flag leaves the original in place.
+bash "$SKILL_DIR/scripts/quarantine.sh" add "$SESSION" \
+  "$HOME/.claude/plugins/installed_plugins.json" --copy
+
+# 3. Edit the manifest via Python (atomic, preserves all unrelated keys).
+python3 - <<'PYEOF'
+import json, os
+path = os.path.expanduser('~/.claude/plugins/installed_plugins.json')
 with open(path) as f: d = json.load(f)
-to_remove = ['plugin-a@marketplace', 'plugin-b@marketplace', ...]
-for key in to_remove:
-    d['plugins'].pop(key, None)
+to_remove = ['plugin-a@marketplace', 'plugin-b@marketplace']
+removed = [k for k in to_remove if d.get('plugins', {}).pop(k, None) is not None]
 with open(path, 'w') as f: json.dump(d, f, indent=2)
-print(f"Removed {len(to_remove)} plugins. Remaining: {len(d['plugins'])}")
+print(f"Removed {len(removed)} plugins from manifest. Remaining: {len(d.get('plugins', {}))}")
 PYEOF
 
-# 3. Delete plugin cache directories
-rm -rf ~/.claude/plugins/cache/<marketplace>/{plugin-a,plugin-b,...}
+# 4. Move plugin cache directories into the quarantine session.
+#    quarantine.sh refuses to operate outside ~/.claude/, so the path is checked.
+for cache_dir in ~/.claude/plugins/cache/<marketplace>/{plugin-a,plugin-b}; do
+  bash "$SKILL_DIR/scripts/quarantine.sh" add "$SESSION" "$cache_dir"
+done
 
-# 4. Delete standalone skill directories
-# CRITICAL: verify path first
-ls ~/.claude/skills/<skill-name>  # must succeed before rm
-rm -rf ~/.claude/skills/{skill-a,skill-b,...}
+# 5. Move standalone skill directories into the quarantine session.
+#    Verify each path exists first — quarantine.sh skips missing paths but a
+#    visible `ls` makes the failure obvious if the user typoed a name.
+for skill_dir in ~/.claude/skills/{skill-a,skill-b}; do
+  ls -d "$skill_dir" >/dev/null 2>&1 || { echo "skip (not found): $skill_dir"; continue; }
+  bash "$SKILL_DIR/scripts/quarantine.sh" add "$SESSION" "$skill_dir"
+done
+
+# 6. Write the MANIFEST.md so the user can see what was moved and how to restore.
+bash "$SKILL_DIR/scripts/quarantine.sh" manifest "$SESSION"
 ```
 
-Common mistake: `rm -rf` against a non-existent path silently succeeds. ALWAYS `ls` first when you're not 100% sure.
+If the user later wants the items back, restore is one command:
+
+```bash
+bash "$SKILL_DIR/scripts/restore.sh" "$SESSION"
+```
+
+Common mistakes to avoid:
+
+- **Don't reach for `rm -rf`** even when the user says "just delete it" — quarantine is a `mv`, which is just as fast and reversible. Save destructive deletion for the user to choose explicitly via `quarantine.sh purge` after the TTL.
+- **Don't skip the manifest step** — without `MANIFEST.md` the user can't tell what was moved or how to restore it.
+- **Don't run `quarantine.sh add` against a path outside `~/.claude/`** — the script will refuse, but bad input still wastes a round-trip.
 
 ## Phase 8 — Verify
 
@@ -195,13 +230,13 @@ After restart you should see:
   ✅ No more <plugin-name> registration noise (if you removed it)
 ```
 
-Mention the backup file. Tell them they can restore with:
+Tell them about the quarantine. Restore is one command:
 
 ```bash
-mv ~/.claude/plugins/installed_plugins.json.bak ~/.claude/plugins/installed_plugins.json
+bash "$SKILL_DIR/scripts/restore.sh" "$SESSION"
 ```
 
-(Note: deleted cache dirs would need plugin reinstall, which the manifest restore alone doesn't handle. Mention this if they care about full recoverability.)
+The quarantine has a 7-day TTL — after that, `quarantine.sh purge` will delete sessions older than the cutoff. Until then, every `mv`-ed cache directory and skill directory is recoverable in place; the manifest snapshot inside the session lets the user reconstruct the pre-audit `installed_plugins.json` if they ever want it back.
 
 ## What success looks like
 

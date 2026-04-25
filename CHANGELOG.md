@@ -4,6 +4,35 @@ All notable changes to claude-config-audit are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] — 2026-04-25
+
+External-review fixes covering stale guidance, unkept v2 promises, and CI gaps. Six independent issues; each is fully addressed.
+
+### Added
+
+- **`scripts/inject-audit-data.py`** — safe HTML data injector. JSON-stringifies the audit data and escapes the four sequences unsafe inside `<script>` (`<`, `</`, U+2028, U+2029) before splicing it into either template. Both workflow docs and SKILL.md now mandate this script — hand-editing the placeholder is no longer the documented path because agent output may legitimately contain `</script>` strings or line-separator characters that would break the script tag if injected raw.
+- **`scripts/analyze-session-history.py`** — deterministic invocation counter. Walks `~/.claude/projects/**/*.jsonl` and counts: `tool_use` blocks where `name=="Skill"` and `input.skill==<name>`, user messages containing `<command-name>/<name></command-name>` tags, and (optionally) `Bash` commands matching configurable `--bash-pattern label=regex` arguments. Emits JSON with per-skill `count`, `firstSeen`, `lastSeen`, and `byDay` breakdown. The bucket agents now interpret these counts instead of inventing them; `parallel-agent-patterns.md` instructs them not to re-grep the JSONL or disagree with the JSON.
+- **Real security-findings UI** in both HTML decision tools. The CHANGELOG promised this in `2.0.0` but the templates didn't deliver it. Now they do: a separate `🔐 Security findings` section renders above the keep/delete cards, sorted high → medium → low, with three-state `fix-now / acknowledge / skip` toggles per finding. The data shape (severity, category, file, line, evidence, why, fix, verdict) is documented in a `SECURITY_DATA_SHAPE` comment in each template. Decisions persist via `localStorage` and the markdown export prepends a `## 🔐 Security findings` section so users can paste back their fix/ack/skip choices. The decision envelope adds a `securityDecisions` map for cross-run memory.
+- **CI** — `.github/workflows/ci.yml`. Five jobs: `bash -n` syntax check, `shellcheck` (severity=warning), `python -m py_compile` matrixed across Python 3.9/3.11/3.12 on Ubuntu and macOS, `python -m unittest` on the same matrix, a quarantine/restore roundtrip test, and a template smoke test that asserts no `</script>` breakout in the rendered JS body.
+- **`tests/`** — fixture tests for `inject-audit-data.py` (10 cases including adversarial payloads against both real templates), `audit-history.py` (envelope parsing, save/latest roundtrip, diff against prior audits), `analyze-session-history.py` (synthetic projects directory verifying skill counts, slash-command counts, time-window filtering, malformed-JSON resilience, bash-pattern regex matching), and a bash quarantine/restore roundtrip with boundary checks.
+- **`${CLAUDE_PLUGIN_ROOT}` resolution in commands.** Both `commands/audit-skills.md` and `commands/audit-rules.md` now resolve the skill location through `SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/claude-config-audit}"` and reference scripts/assets through `$SKILL_DIR/...`. This makes `claude --plugin-dir <path>` testing work without needing a specific install path. README documents both install modes plus the `--plugin-dir` variant.
+
+### Changed
+
+- **Both HTML templates' injection points are now JSON, not JS.** The placeholder is `const __AUDIT_DATA__ = /* AUDIT_DATA_INJECTION_POINT */ {...};` (or `[...]` for the skills template), populated only via `inject-audit-data.py`. The runtime code derives `data` and `securityFindings` from that JSON, so the existing render paths continue to work.
+- **Workflow docs** (`references/skills-audit-workflow.md`, `references/rules-audit-workflow.md`, `SKILL.md`) now teach the inject script as the only safe path for splicing audit data into a template. Hand-editing the placeholder is documented as wrong.
+- **Phase 7 of `references/skills-audit-workflow.md` no longer shows `rm -rf` as the canonical execution sequence.** The deletion path is now `quarantine.sh init` → `add` → `manifest`, with explicit warning that previous versions of the document showed `rm -rf` and that guidance was wrong. The Phase 6 confirmation summary and Phase 9 restore instructions were updated to match — every "delete" surface in the document now reflects quarantine semantics.
+- **Bucket-agent prompt template** in `references/parallel-agent-patterns.md` reorganised around the new deterministic counts file. The agent's job is now to interpret `count`, `lastSeen`, `byDay` from `/tmp/session-counts.json`, not to re-grep the JSONL. Anti-patterns (re-running grep, counting registry mentions, inventing missing counts) are explicit "DO NOT" items.
+
+### Fixed
+
+- **Stale `rm -rf` guidance contradicting the v2 quarantine promise** — `references/skills-audit-workflow.md` Phase 7 was the canonical-sequence example agents were most likely to copy. Now matches the SKILL.md and slash-command guidance everywhere.
+- **HTML data injection accepted any agent output verbatim** — the injection point was a JS array literal, so agent strings containing `</script>` would break the script tag and any string containing U+2028/U+2029 would break JS source line termination. Agent output now flows through `safe_json_for_script()` which JSON-encodes and escapes those four sequences. Existing per-render `escapeHtml()` calls remain as defence in depth.
+- **CHANGELOG claim "Findings surface in a separate HTML section above the keep/delete cards" was unkept** — the templates had no security-findings UI in 2.0.0. The Unreleased line item ships what the CHANGELOG already promised.
+- **Plugin commands assumed a specific cwd-relative install path** — `commands/audit-skills.md` and `commands/audit-rules.md` referenced `claude-config-audit/SKILL.md` and `scripts/...` without rooting them, which broke under non-standard installs and `claude --plugin-dir` testing. All paths now route through `$SKILL_DIR` resolved from `${CLAUDE_PLUGIN_ROOT}`.
+- **Subagent counts were ungrounded** — the bucket agents were instructed to count REAL invocations by greppping session history themselves. Agents sample, summarize, and occasionally invent. The deterministic counter `analyze-session-history.py` is now the single source of truth; agents interpret its output.
+- **No CI** — first repo commit had no `.github/workflows/`. Bash syntax errors, broken shell quoting, and Python compile failures could land on `main` undetected. CI now exercises bash, Python, the quarantine roundtrip, and template injection on every push and PR.
+
 ## [2.0.0] — 2026-04-25
 
 Major release. Deletions are now reversible quarantine moves, decisions persist across runs, and the skill ships as a plugin with first-class slash commands. Every public-facing surface has been reviewed for portability — the skill works for any user with no hardcoded assumptions about what's installed.

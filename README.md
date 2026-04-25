@@ -4,7 +4,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-7c3aed.svg)](https://docs.claude.com/en/docs/claude-code)
-[![Version](https://img.shields.io/badge/Version-2.0.0-22c55e.svg)]()
+[![Version](https://img.shields.io/badge/Version-2.1.0-22c55e.svg)]()
+[![CI](https://github.com/MJWNA/claude-config-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/MJWNA/claude-config-audit/actions/workflows/ci.yml)
 
 A Claude Code skill + plugin that scans your installation, dispatches parallel sub-agents to evaluate usage from your own session history, generates two interactive HTML decision tools, and safely executes the cleanup you choose — with quarantine-based reversibility and decision memory across runs.
 
@@ -52,9 +53,17 @@ When you run this skill, by the end of the session you have:
 As a plugin (recommended — gets you the slash commands):
 
 ```bash
-git clone https://github.com/MJWNA/claude-config-audit.git ~/.claude/plugins/cache/local/claude-config-audit/2.0.0
+git clone https://github.com/MJWNA/claude-config-audit.git ~/.claude/plugins/cache/local/claude-config-audit/2.1.0
 # Then register in ~/.claude/plugins/installed_plugins.json
 ```
+
+To test a local checkout without registering it as a permanent install:
+
+```bash
+claude --plugin-dir /path/to/claude-config-audit
+```
+
+Inside the slash commands, the skill is located via `${CLAUDE_PLUGIN_ROOT}` (set automatically by Claude Code), with a fallback to `~/.claude/skills/claude-config-audit/` for standalone-skill installs. No path inside this repo assumes a specific cwd or marketplace name — it works regardless of where the plugin is mounted.
 
 Or as a standalone skill:
 
@@ -210,56 +219,64 @@ Phase 1: Prerequisite check (scripts/verify-prerequisites.sh)
   ↓
 Phase 2: Discovery (scripts/discover-config.sh [--project])
   ↓
-Phase 3: Decision memory check (scripts/audit-history.py latest/diff)
+Phase 3: Deterministic invocation counts
+         (scripts/analyze-session-history.py --window-days 90)
+         walks ~/.claude/projects/**/*.jsonl, emits JSON the agents read
+         instead of grepping themselves
   ↓
-Phase 4: Categorise items into 4-6 buckets per audit half
+Phase 4: Decision memory check (scripts/audit-history.py latest/diff)
   ↓
-Phase 5: Dispatch parallel sub-agents (5+ for skills, 5 for rules)
+Phase 5: Categorise items into 4-6 buckets per audit half
+  ↓
+Phase 6: Dispatch parallel sub-agents (4-5 buckets + 1 security pass)
   ↓                                    ↓
-  Each bucket agent reads               Each rules-half agent has
-  session history JSONL files at        a distinct purpose:
-  ~/.claude/projects/                   - Existing rules quality audit
-                                        - Codebase pattern scan
-  Counts real Skill tool calls,         - Official spec lookup
-  user slash commands, MCP              - Session-history archaeology
-  invocations, Bash patterns            - Security pass
-                                        +
+  Each bucket agent reads the           Each rules-half agent has
+  pre-computed counts JSON and          a distinct purpose:
+  interprets them — never               - Existing rules quality audit
+  re-greps the JSONL, never             - Codebase pattern scan
+  invents counts the JSON               - Official spec lookup
+  doesn't contain.                      - Session-history archaeology
+                                        - Security pass
   Plus: 1 dedicated security-pass agent
   scanning hooks, MCPs, settings
   ↓                                    ↓
-Phase 6: Synthesise findings into HTML data array (with confidence + reasonCodes)
+Phase 7: Synthesise findings into JSON (sections + securityFindings,
+         with confidence + reasonCodes per item)
   ↓
-Phase 7: Read HTML template, inject data, save to user's CWD
+Phase 8: scripts/inject-audit-data.py splices the JSON into the HTML
+         template — JSON-encoded, with </script>, <, U+2028, U+2029
+         escaped so agent output cannot break the script tag
   ↓
 [USER REVIEWS IN BROWSER — outside chat]
   ↓
-Phase 8: User pastes self-contained markdown export
+Phase 9: User pastes self-contained markdown export
   ↓
-Phase 9: Confirm quarantine plan, get "go"
+Phase 10: Confirm quarantine plan, get "go"
   ↓
-Phase 10: Execute via quarantine (mv, not rm -rf) + save history
+Phase 11: Execute via quarantine (mv, not rm -rf) + save history
   ↓
-Phase 11: Verify + restart prompt + restore instructions
+Phase 12: Verify + restart prompt + restore instructions
 ```
 
 ### Session-history evidence sources
 
-The agents look for:
+`scripts/analyze-session-history.py` is the deterministic counter — agents interpret what it produces, they don't re-grep the JSONL or invent counts:
 
-| Signal | Where |
+| Signal | Where it comes from |
 |---|---|
-| Formal `Skill` tool calls | `tool_use` blocks with `"skill":"<name>"` in JSONL |
+| Formal `Skill` tool calls | `tool_use` blocks where `name == "Skill"` and `input.skill == "<name>"` |
 | User-typed slash commands | `<command-name>/<name></command-name>` tags in user messages |
-| MCP tool invocations | `tool_use` with names like `mcp__<plugin>__<tool>` |
-| Bash command patterns | `tool_use` with bash content matching skill-relevant patterns |
-| Subagent dispatches | `Task` tool calls with matching `subagent_type` |
+| Bash command patterns | `tool_use` Bash commands matching `--bash-pattern label=regex` (repeatable) |
+
+For each signal the script emits `count`, `firstSeen`, `lastSeen`, and a `byDay` breakdown so agents can spot patterns (ramped through April, none since 04-10, etc.).
 
 It explicitly does NOT count:
 
 - Skill descriptions appearing in `<system-reminder>` skill registries (those appear in every recent session, regardless of usage)
 - Mentions of the skill name in user prompts that don't actually trigger it
+- Any string that isn't a structurally-matched tool call or command tag
 
-This filtering is critical — without it, every item would look "frequently invoked" because skill registries appear in 99% of sessions.
+This filtering is critical — without it, every item would look "frequently invoked" because skill registries appear in 99% of sessions. Earlier versions delegated counting to LLM agents; agents sample, summarize, and occasionally invent — moving counts to a deterministic Python pass means verdicts are grounded in real data.
 
 ### The HTML decision tools
 
@@ -269,9 +286,10 @@ Both templates are **self-contained single-file apps**:
 - Vanilla CSS — no preprocessor
 - localStorage persistence — your decisions survive page reloads
 - No external assets — works offline
-- HTML escaping on every interpolation — agent output is treated as untrusted text, never parsed as HTML
+- **Two layers of injection safety** — agent output is JSON-encoded with `<`, `</`, U+2028, and U+2029 escaped to `\\uXXXX` before the splice (`scripts/inject-audit-data.py`), then every interpolation is HTML-escaped at render time. Hand-editing the placeholder is not a supported path; agent output may legitimately contain `</script>` strings or line-separator characters that would break the script tag if injected raw.
+- **🔐 Security findings section** rendered above the keep/delete cards when the security-pass agent flags anything. Findings are sorted high → medium → low, each with a three-state `fix-now / acknowledge / skip` toggle. Decisions are persisted to `localStorage` and prepended to the markdown export so you can paste back your fix/ack/skip choices alongside the keep/delete decisions.
 
-The data injection point is documented in the template's HTML comment. The data shape (with `confidence`, `reasonCodes`, `previousDecision` fields) is documented inline.
+The data shape (`confidence`, `reasonCodes`, `previousDecision`, plus `severity`, `category`, `evidence`, `why`, `fix` for security findings) is documented inline in each template's `SECURITY_DATA_SHAPE` and main item comment.
 
 ### Safety protocol
 
@@ -318,6 +336,10 @@ claude-config-audit/
 ├── .gitignore
 ├── .claude-plugin/
 │   └── plugin.json                     # Plugin manifest (for plugin install path)
+├── .github/
+│   ├── ISSUE_TEMPLATE/                 # Bug report + feature request templates
+│   └── workflows/
+│       └── ci.yml                      # bash -n + shellcheck + py_compile + tests
 ├── commands/
 │   ├── audit-skills.md                 # /audit-skills slash command
 │   └── audit-rules.md                  # /audit-rules slash command
@@ -333,9 +355,16 @@ claude-config-audit/
 ├── scripts/
 │   ├── verify-prerequisites.sh         # Sanity check before audit
 │   ├── discover-config.sh              # Inventory current install (portable bash)
+│   ├── analyze-session-history.py      # Deterministic invocation counter (JSON output)
+│   ├── inject-audit-data.py            # Safe HTML data splicer (JSON-encoded, escaped)
 │   ├── quarantine.sh                   # Quarantine session management
 │   ├── restore.sh                      # Restore from quarantine
 │   └── audit-history.py                # Decision memory across runs
+├── tests/
+│   ├── test_analyze_session_history.py # Synthetic-projects fixture tests
+│   ├── test_audit_history.py           # Envelope parsing + diff tests
+│   ├── test_inject_audit_data.py       # Adversarial-payload injection tests
+│   └── test_quarantine_roundtrip.sh    # quarantine.sh + restore.sh roundtrip
 ├── docs/
 │   ├── PHILOSOPHY.md                   # Why this skill exists
 │   ├── HOW-IT-WORKS.md                 # Detailed phase-by-phase walkthrough
@@ -436,9 +465,11 @@ Quick pointers:
 |---|---|
 | Agent prompts | `references/parallel-agent-patterns.md` |
 | Categorisation buckets | `references/skills-audit-workflow.md` |
+| What counts as an invocation | `scripts/analyze-session-history.py` (or pass `--bash-pattern label=regex` for plugin scripts) |
 | HTML styling | `assets/*-audit-template.html` (CSS at top) |
 | Markdown output format | `generateMarkdown()` in each HTML template |
-| Time window (default 90d) | Find every "90 days" in `references/*.md` |
+| Security-finding categories the UI knows | `SECURITY_DATA_SHAPE` comment in each template + the security-pass prompt in `references/parallel-agent-patterns.md` |
+| Time window (default 90d) | `--window-days` flag on `analyze-session-history.py`; references in `references/*.md` |
 | Quarantine TTL (default 7d) | `CLAUDE_CONFIG_AUDIT_TTL_DAYS` env var |
 | Prerequisite checks | `scripts/verify-prerequisites.sh` |
 
@@ -493,7 +524,7 @@ The skill is intentionally opinionated about workflow but flexible about content
 
 ## 📜 Credits
 
-Original pattern by [Ronnie Meagher (@MJWNA)](https://github.com/MJWNA). v2 extends the skill with quarantine-based reversibility, decision memory, security-pass agent, slash commands, and project-scope coverage.
+Original pattern by [Ronnie Meagher (@MJWNA)](https://github.com/MJWNA). v2 extends the skill with quarantine-based reversibility, decision memory, security-pass agent, slash commands, and project-scope coverage. v2.1 ships the security-findings UI, deterministic invocation counts (no more agent-invented numbers), HTML data-injection hardening (`</script>` / U+2028 / U+2029 escaped before splice), explicit `${CLAUDE_PLUGIN_ROOT}` resolution, and CI.
 
 Detailed philosophy: [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md).
 

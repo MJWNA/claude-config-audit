@@ -1,0 +1,149 @@
+"""Tests for scripts/audit-history.py — the decision-memory store."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = REPO_ROOT / "scripts" / "audit-history.py"
+
+
+def load_history_module():
+    spec = importlib.util.spec_from_file_location("audit_history", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestParseEnvelope(unittest.TestCase):
+    def setUp(self) -> None:
+        self.mod = load_history_module()
+
+    def test_extracts_envelope(self):
+        md = """# Audit
+some content
+---
+<!-- claude-config-audit:decisions
+{"auditType": "skills", "generatedAt": "2026-01-01T00:00:00Z",
+ "decisions": {"p-foo": {"decision": "delete"}}}
+-->
+"""
+        env = self.mod.parse_envelope(md)
+        self.assertIsNotNone(env)
+        self.assertEqual(env["auditType"], "skills")
+        self.assertIn("p-foo", env["decisions"])
+
+    def test_returns_none_when_no_envelope(self):
+        self.assertIsNone(self.mod.parse_envelope("no envelope here"))
+
+    def test_returns_none_on_invalid_json(self):
+        md = """<!-- claude-config-audit:decisions
+{ invalid json
+-->
+"""
+        self.assertIsNone(self.mod.parse_envelope(md))
+
+
+class TestSaveAndLatest(unittest.TestCase):
+    """Roundtrip: save a markdown export, then `latest` should print it back."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.env = {**os.environ, "HOME": self.tmp}
+        self.mod = load_history_module()
+
+    def _run(self, *args, input_=None):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), *args],
+            env=self.env,
+            input=input_,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_save_then_latest_roundtrip(self):
+        md = Path(tempfile.mktemp(suffix=".md"))
+        md.write_text("""# Skills audit
+---
+<!-- claude-config-audit:decisions
+{"auditType": "skills", "generatedAt": "2026-01-01T00:00:00Z",
+ "summary": {"keep": 1, "delete": 1, "maybe": 0, "undecided": 0},
+ "decisions": {
+   "p-keep": {"decision": "keep", "agentVerdict": "keep", "invocations": "5 in 90d"},
+   "p-del":  {"decision": "delete", "agentVerdict": "delete", "invocations": "0 in 90d"}
+ }}
+-->
+""")
+        save_result = self._run("save", "skills", str(md))
+        self.assertEqual(save_result.returncode, 0, save_result.stderr)
+        self.assertIn(".audit-history", save_result.stdout)
+
+        latest_result = self._run("latest", "skills")
+        self.assertEqual(latest_result.returncode, 0, latest_result.stderr)
+        latest = json.loads(latest_result.stdout)
+        self.assertEqual(latest["auditType"], "skills")
+        self.assertIn("p-keep", latest["decisions"])
+
+    def test_save_rejects_invalid_audit_type(self):
+        md = Path(tempfile.mktemp(suffix=".md"))
+        md.write_text("no envelope")
+        result = self._run("save", "garbage", str(md))
+        self.assertNotEqual(result.returncode, 0)
+
+
+class TestDiff(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.env = {**os.environ, "HOME": self.tmp}
+
+    def _run(self, *args):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), *args],
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_diff_first_run_marks_everything_new(self):
+        items = [{"id": "p-a", "invocations": "0"}, {"id": "p-b", "invocations": "5"}]
+        items_path = Path(tempfile.mktemp(suffix=".json"))
+        items_path.write_text(json.dumps({"items": items}))
+        result = self._run("diff", "skills", str(items_path))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        diff = json.loads(result.stdout)
+        self.assertIsNone(diff["previous"])
+        self.assertEqual(set(diff["new"]), {"p-a", "p-b"})
+
+    def test_diff_detects_invocation_change(self):
+        # Save a prior audit.
+        md = Path(tempfile.mktemp(suffix=".md"))
+        md.write_text("""# x
+---
+<!-- claude-config-audit:decisions
+{"auditType": "skills", "generatedAt": "2026-01-01",
+ "decisions": {"p-a": {"decision": "keep", "invocations": "0 in 90d"}}}
+-->
+""")
+        self._run("save", "skills", str(md))
+
+        # Now feed current items where p-a's invocations have grown.
+        items = [{"id": "p-a", "invocations": "12 in 90d"}]
+        items_path = Path(tempfile.mktemp(suffix=".json"))
+        items_path.write_text(json.dumps(items))
+        result = self._run("diff", "skills", str(items_path))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        diff = json.loads(result.stdout)
+        self.assertEqual(len(diff["changed"]), 1)
+        self.assertEqual(diff["changed"][0]["id"], "p-a")
+        self.assertEqual(diff["changed"][0]["currentInvocations"], "12 in 90d")
+
+
+if __name__ == "__main__":
+    unittest.main()

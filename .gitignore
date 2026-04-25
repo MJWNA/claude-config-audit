@@ -20,5 +20,9 @@ Thumbs.db
 # Backup files (these are user-machine artefacts, not skill code)
 *.bak
 
+# Python bytecode produced by the test suite and ad-hoc imports
+__pycache__/
+*.pyc
+
 # Session handoffs are developer-local (decisions + learnings are tracked)
 .claude/session/HANDOFF.md
