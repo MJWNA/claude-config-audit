@@ -29,21 +29,23 @@ If the session count is < 50, warn the user that evidence will be thin — agent
 
 ## Phase 2 — Categorise for parallel dispatch
 
-Group the user's items into 4-6 logical buckets so each agent has a tight scope. Buckets that work well in practice:
+Group the user's items into 4-6 logical buckets so each agent has a tight scope. Read the description of each plugin/skill (from its `plugin.json` or `SKILL.md`) and cluster by *purpose*, not by name. The right buckets depend entirely on what the user has installed.
 
-- **Core dev tooling** — language servers, version control, debugging, doc lookup
-- **Workspace / hooks / config** — bootstrap, hookify, settings managers
-- **Frontend / design** — figma, frontend-design, playground, UI tools
-- **Platform / infrastructure** — vercel, sentry, warp, deployment tools
-- **Communications** — slack, telegram, email, notion
-- **Meta / skill authoring** — superpowers, compound-engineering, skill-creator, output-style plugins
-- **Domain-specific user skills** — anything custom the user has authored
+Common purpose categories you can lean on (use whichever fit; ignore the rest):
 
-Don't force every category. If the user only has 10 items total, 2-3 buckets is enough.
+- **Core dev tooling** — language servers, version control, doc lookup, debugging
+- **Workspace / config / hooks** — bootstrap-style plugins, settings managers, automation hooks
+- **Frontend / design** — UI tooling, asset pipelines, design references
+- **Platform / infrastructure** — cloud providers, deployment, observability
+- **Communications** — chat, email, ticket systems, notifications
+- **Meta / skill authoring** — anything that helps the user write or improve their own skills/plugins
+- **Domain-specific user skills** — custom skills the user has authored for their work
+
+Don't force every category. If the user only has 10 items total, 2-3 buckets is enough. If they have 80 items, you may need more or different buckets — categorise by what's actually there.
 
 ## Phase 3 — Dispatch parallel agents
 
-Send a single message with multiple `Agent` tool calls — one per bucket — using subagent_type `compound-engineering:research:session-historian` (or `general-purpose` if that subagent isn't available).
+Send a single message with multiple `Agent` tool calls — one per bucket. The default `subagent_type` is `general-purpose` (always available). If specialised research subagents are installed (e.g. a `session-historian` from a research-oriented plugin), prefer those — they may know where Claude Code, Codex, and Cursor session storage live without prompting. If the user's `Agent` tool exposes a list, pick the most session-history-aware one available; otherwise fall back to `general-purpose`.
 
 Each agent prompt should:
 

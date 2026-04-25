@@ -17,15 +17,19 @@ Independent agents per bucket finish in parallel and each keeps a tight context.
 Always dispatch in a single message with multiple `Agent` tool calls:
 
 ```
-[message with 4-5 Agent tool calls]
-  Agent({ subagent_type: 'compound-engineering:research:session-historian', prompt: '...bucket 1 prompt...' })
-  Agent({ subagent_type: 'compound-engineering:research:session-historian', prompt: '...bucket 2 prompt...' })
-  Agent({ subagent_type: 'compound-engineering:research:session-historian', prompt: '...bucket 3 prompt...' })
-  Agent({ subagent_type: 'compound-engineering:research:session-historian', prompt: '...bucket 4 prompt...' })
-  Agent({ subagent_type: 'compound-engineering:research:session-historian', prompt: '...bucket 5 prompt...' })
+[message with 4-5 Agent tool calls — all in the SAME message so they run in parallel]
+  Agent({ subagent_type: '<best-available>', prompt: '...bucket 1 prompt...' })
+  Agent({ subagent_type: '<best-available>', prompt: '...bucket 2 prompt...' })
+  Agent({ subagent_type: '<best-available>', prompt: '...bucket 3 prompt...' })
+  Agent({ subagent_type: '<best-available>', prompt: '...bucket 4 prompt...' })
+  Agent({ subagent_type: '<best-available>', prompt: '...security-pass prompt...' })
 ```
 
-If `compound-engineering:research:session-historian` isn't available, fall back to `general-purpose`. The session-historian is preferred because it knows where Claude Code, Codex, and Cursor session storage live.
+### Picking `subagent_type`
+
+The default is `general-purpose` (always available). If the user has a research-oriented plugin installed that exposes a session-historian or research-analyst subagent, prefer that — it may know where Claude Code / Codex / Cursor session storage lives without prompting.
+
+Discover what's available by checking the Agent tool's enum at runtime, NOT by hardcoding plugin-specific subagent names. The skill must work for any installer.
 
 ## Skills audit prompt template
 
@@ -125,7 +129,7 @@ Also include an **Anti-recommendations** section — patterns that vary too much
 You are researching the OFFICIAL Claude Code specification for user-scope and project-scope rules in `.claude/rules/*.md` files.
 
 USE THESE SOURCES IN ORDER:
-1. Context7 MCP if available: mcp__context7__resolve-library-id then query-docs for "claude-code rules frontmatter"
+1. If a docs-lookup MCP is available (Context7, framework-docs-researcher, or similar), use it first — it has fresher and more concentrated docs than open web search. Discover at runtime; don't hardcode.
 2. WebFetch the official docs: https://code.claude.com/docs/en/memory, https://code.claude.com/docs/en/skills
 3. WebSearch for known parser bugs and community workarounds (issue #17204, #23478, #13905)
 
@@ -177,6 +181,69 @@ A real candidate must:
 
 Be honest about confidence. Insufficient signal = MAYBE not RECOMMEND.
 ```
+
+## Security-pass agent — run alongside the bucket agents on BOTH halves
+
+A 5th agent for the skills half (or 5th alongside the 4 specialised rules agents) that scans for *safety* concerns the bucket agents won't catch. The agent recommends only — destructive action still requires the user's confirmation.
+
+```
+You are doing a security pass over the user's Claude Code config at ~/.claude/.
+This is NOT a usefulness audit — that's the other agents. Your job is safety.
+
+CHECK FOR:
+
+1. **Hooks calling network commands** — grep ~/.claude/settings.json and
+   ~/.claude/settings.local.json for `hooks.*.command` containing `curl`,
+   `wget`, `nc`, `ssh`, or any URL-shaped string. PreToolUse and
+   UserPromptSubmit hooks calling external services are particularly risky
+   — they fire on every tool call / user message.
+
+2. **Shell-injection patterns in hook commands** — unquoted `$ARG` /
+   `${ARG}` usage, `eval`, `bash -c "$ARG"`, `sh -c $ARG`, anything that
+   feeds user-controlled data into a shell context.
+
+3. **Hardcoded secrets in settings** — values in `env` blocks, `mcpServers
+   .*.env`, or hook commands that look like tokens (long base64-ish
+   strings, anything matching `(?i)(token|secret|key|password|credential)`
+   = literal value rather than `${ENV_VAR}` reference).
+
+4. **MCP servers on suspicious endpoints** — `mcpServers.*.url` or
+   `mcpServers.*.command` pointing to non-HTTPS URLs, raw IPs, or
+   commands that download-and-exec.
+
+5. **Skills with over-broad allowed-tools** — `allowed-tools: ["*"]` or
+   `allowed-tools: ["Bash"]` without scope restriction in any standalone
+   SKILL.md or plugin skill. Any skill that grants Bash unrestricted is a
+   foot-cannon.
+
+6. **Stale references** — rules referencing skills that no longer exist
+   (rules mentioning a skill name that's not in the inventory). These
+   aren't security bugs but cause silent confusion.
+
+7. **Project-scope rules contradicting user-scope rules** — same rule
+   filename in both, different content. Project wins on conflict per spec.
+
+OUTPUT FORMAT — structured markdown sections:
+
+## High-severity findings (action recommended)
+- One bullet per finding with: file path, line number if applicable,
+  what's wrong, why it matters, suggested fix.
+
+## Medium-severity findings (worth a look)
+- Same shape.
+
+## Low-severity / informational
+- Same shape.
+
+## False positives I considered but cleared
+- One-liner per skipped pattern with reasoning. (Helps the user trust the
+  pass — they can see what was checked, not just what was flagged.)
+
+DO NOT modify any files. DO NOT recommend automatic fixes for medium/low
+items. The user makes every call.
+```
+
+The output of this agent is presented in the HTML decision UI as a separate "🔐 Security findings" section ABOVE the regular keep/delete cards. High-severity findings get their own decision toggle: `fix now` / `acknowledge / skip`.
 
 ## After agents return — synthesis
 

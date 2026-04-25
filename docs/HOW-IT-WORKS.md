@@ -4,241 +4,228 @@ What actually happens when a user runs `claude-config-audit`. Each phase, each t
 
 ## Phase 0 — Trigger
 
-User says something like "audit my Claude config" / "clean up my skills" / "spring clean Claude". Per the SKILL.md description's deliberately-pushy triggering, Claude invokes the skill.
+The skill activates one of three ways:
 
-The skill loads its SKILL.md into context. The references files don't load yet — they're progressive-disclosed.
+1. **Slash command** — `/audit-skills` or `/audit-rules`. This is the most reliable trigger and skips the "which half" prompt.
+2. **Description match** — the user says something like "audit my Claude config", "clean up my skills", "spring clean Claude". The description in `SKILL.md` covers the common phrasings.
+3. **Manual** — `Skill` tool invocation by name from another agent.
+
+The skill loads its `SKILL.md` into context. The references files don't load yet — they're progressive-disclosed when the skill reaches the corresponding phase.
 
 ## Phase 1 — Prerequisite check
-
-Claude runs `scripts/verify-prerequisites.sh`:
 
 ```bash
 bash <skill-dir>/scripts/verify-prerequisites.sh
 ```
 
-This checks:
+Verifies:
 
 - `~/.claude/` exists (Claude Code installed)
-- At least one of `~/.claude/plugins/installed_plugins.json`, `~/.claude/skills/`, or `~/.claude/rules/` is populated
-- `python3` and `ls` available
+- At least one auditable surface is present: plugin manifest, standalone skills, user-scope rules, hooks/MCP settings, or project-scope config in `$PWD/.claude/`
+- `python3` is available (used for atomic JSON edits and the audit-history script)
 - CWD is writable (HTML lands here)
+- Session-history depth — warns if < 50 sessions (verdicts will be biased toward "looks underused")
+- Pending quarantine — warns if there's an unresolved quarantine session from a previous run
 
-If anything fails, the skill stops and reports. Otherwise it proceeds.
+If anything fails the skill stops and reports. Otherwise it proceeds.
 
 ## Phase 2 — Discovery
 
-Claude runs `scripts/discover-config.sh` to inventory:
+```bash
+bash <skill-dir>/scripts/discover-config.sh           # user-scope only
+bash <skill-dir>/scripts/discover-config.sh --project # adds $PWD/.claude/
+```
+
+The discovery script inventories:
 
 - Plugins in `installed_plugins.json` (key, version, install date)
-- Standalone skills under `~/.claude/skills/` (with description from each SKILL.md)
-- User-scope rules under `~/.claude/rules/` (with size + frontmatter status)
-- Session history depth (count of `.jsonl` files in `~/.claude/projects/`)
+- Standalone skills under `~/.claude/skills/` (with description from each `SKILL.md`)
+- User-scope rules under `~/.claude/rules/` (size + frontmatter status)
+- Hook handlers + MCP servers (count only — settings.json is read but never modified at this stage)
+- Session history depth + oldest session date
+- Audit history (any previous audit's decisions on file)
+- Quarantine status (anything pending restore from previous runs)
 
-This data informs which audit halves to offer:
+## Phase 3 — Decision memory check
 
-- Plugins or skills present → skills audit half is relevant
-- Rules present → rules audit half is relevant
+If `~/.claude/.audit-history/` exists, the skill reads the most recent audit's decisions:
 
-Claude shows the summary and asks if they want both halves or one.
-
-## Phase 3 — Skills audit half (if chosen)
-
-### 3a. Categorise
-
-Claude reads each SKILL.md's description and groups items into 4-6 buckets. Common buckets:
-
-- Core dev tooling (LSP, version control, doc lookup)
-- Workspace / hooks
-- Frontend / design
-- Platform / infrastructure
-- Communications
-- Meta / skill-authoring
-- Domain-specific user skills
-
-The categorisation is heuristic. Claude can re-categorise on the fly if needed.
-
-### 3b. Dispatch parallel agents
-
-Claude reads `references/parallel-agent-patterns.md` and `references/skills-audit-workflow.md` for prompt templates.
-
-Then dispatches in a single message:
-
-```
-Agent({ subagent_type: 'compound-engineering:research:session-historian',
-        prompt: '...skills audit prompt for bucket 1...' })
-Agent({ subagent_type: 'compound-engineering:research:session-historian',
-        prompt: '...skills audit prompt for bucket 2...' })
-... (one per bucket)
+```bash
+python3 <skill-dir>/scripts/audit-history.py latest skills
+python3 <skill-dir>/scripts/audit-history.py diff skills <current-items.json>
 ```
 
-Each agent:
+The diff produces three groups:
 
-- Searches `~/.claude/projects/*.jsonl` for tool_use entries
-- Counts formal Skill calls, slash commands, Bash patterns
-- Returns a structured report per item with frequency / recency / evidence / verdict
+- **new** — items not present in the previous audit (e.g. plugins installed since)
+- **gone** — items present last time but missing now (e.g. uninstalled outside the audit)
+- **changed** — items whose evidence has shifted (e.g. invocation count rose from 0 to 5)
 
-The agents work in parallel. Claude waits for completion notifications.
+For audits with previous history, the skill surfaces only these in the HTML, with stable items rolled up under a "kept since last audit" collapsed section. First audits surface everything.
 
-### 3c. Synthesise
+## Phase 4 — Skills audit half (if chosen)
 
-When all agents return, Claude builds the audit data array. Each item becomes:
+### 4a. Categorise
 
-```js
-{
-  id: 'p-context7',
-  name: 'context7',
-  type: 'plugin',
-  verdict: 'keep',
-  invocations: '220 in 90d 🔥',
-  mostRecent: '2026-04-25 (today)',
-  desc: 'Library docs lookup MCP',
-  triggers: 'Per context7-docs.md rule',
-  notes: '',
-  evidence: '163 query-docs + 57 resolve-library-id calls across 51 sessions',
-  agentReason: 'Highest-value plugin in the audit by a wide margin.'
-}
-```
+The skill reads each plugin/skill description and clusters by *purpose* — see `references/skills-audit-workflow.md` for the bucket categories. The exact buckets depend on what the user has installed; the skill does not assume specific items exist.
 
-### 3d. Build HTML
+### 4b. Dispatch parallel agents
 
-Claude reads the template (`assets/skills-audit-template.html`), replaces the `/* AUDIT_DATA_INJECTION_POINT */ []` placeholder with the populated data array, and writes to user's CWD as `skills-audit.html`.
+In a single message, the skill dispatches:
 
-Claude tells the user:
+- 4-5 bucket agents (one per category) — each scans session history for usage patterns of items in its bucket
+- 1 security-pass agent — scans hooks for shell injection, MCPs for suspicious endpoints, settings for hardcoded tokens, skills for over-broad `allowed-tools`
 
-> Open it: `open ./skills-audit.html`
+Each agent gets a structured prompt (see `references/parallel-agent-patterns.md`) and returns structured findings.
 
-### 3e. User reviews
-
-In their browser, the user:
-
-1. Sees a card per item with verdict badge, invocation count, evidence
-2. Clicks "Apply all agent verdicts" to bulk-load recommendations
-3. Walks through cards, overrides where they disagree
-4. Optionally: filters to "Show undecided" or "Show mismatches"
-5. Clicks "Generate Markdown" → copies the output
-
-### 3f. Receive decisions
-
-User pastes the markdown. Claude parses:
-
-- `## 🗑️ Delete` items → for deletion
-- `## ✅ Keep` items → leave alone
-- `## 🤔 Maybe` items → flag for follow-up
-- `## ⚠️ Where I overrode the agent` → note the user's preferences
-
-### 3g. Confirm + execute
-
-Claude reads `references/safety-protocol.md`. Then:
-
-1. Shows the deletion command list
-2. Waits for "go"
-3. Backs up `installed_plugins.json` → `.bak`
-4. Edits the manifest via Python (atomic)
-5. `rm -rf` the cache directories (after `ls` verification)
-6. `rm -rf` the standalone skill directories (after `ls` verification)
-7. Verifies final state
-
-### 3h. Restart prompt
-
-Claude tells the user to quit and relaunch Claude Code. Notes the backup file path.
-
-## Phase 4 — Rules audit half (if chosen)
-
-### 4a. Read every rule file in full
-
-Claude reads each file in `~/.claude/rules/`. Also reads `~/.claude/CLAUDE.md` for the rule index.
-
-Lists project-scope rule directories if any (for the codebase-pattern-scan agent).
-
-### 4b. Dispatch 4 parallel agents
-
-Different agent types this time, each with a distinct deliverable:
-
-- **Existing rules audit** (`compound-engineering:research:repo-research-analyst`) — per-rule frontmatter + quality assessment + classification mismatch list
-- **Codebase pattern scan** (`compound-engineering:research:repo-research-analyst`) — candidate new rules from cross-project pattern repetition
-- **Official spec lookup** (`compound-engineering:research:framework-docs-researcher`) — current Claude Code rule frontmatter spec + known parser bugs
-- **Session-history archaeology** (`compound-engineering:research:session-historian`) — candidate new rules from repeated corrections / explanations / endorsements
+The skill picks the best available `subagent_type` at runtime. `general-purpose` is always available; specialised research subagents (if installed) are preferred.
 
 ### 4c. Synthesise
 
-Claude builds five arrays:
+When agents return, the skill builds the audit data array. Each item carries:
 
-- `existingRules` — per-rule cards with what-it-does / when-it-fires / why-it-exists / without / quality / issues / actionItems / agentReason / refresh-value
-- `mismatches` — CLAUDE.md classification fixes
-- `newRules` — candidate new rule files **with full proposed content** (not just sketches)
-- `extensions` — small additions to existing rules with location + snippet
-- `refreshes` — keyed by existing-rule id, each with value/scope/benefit for the "🔥 refresh" decision option
+```js
+{
+  id: '<stable-slug>',
+  name: '<display-name>',
+  type: 'plugin' | 'standalone',
+  verdict: 'keep' | 'delete' | 'maybe',
+  confidence: 'high' | 'medium' | 'low',     // NEW in v2
+  reasonCodes: ['zero-usage-90d', ...],      // NEW in v2 — short tags
+  invocations: '<human-readable>',
+  mostRecent: '<date or "Never">',
+  desc: '<what it does>',
+  triggers: '<when it fires>',
+  evidence: '<concrete examples from sessions>',
+  agentReason: '<one paragraph reasoning>',
+  warn: 'overlap' | 'duplicate' | 'one-shot' | undefined,
+  previousDecision: { decision, note, date } | undefined  // NEW in v2 — populated from audit history
+}
+```
 
 ### 4d. Build HTML
 
-Same process as skills-audit-template, but using `assets/rules-audit-template.html`.
+The skill reads `assets/skills-audit-template.html`, replaces the `/* AUDIT_DATA_INJECTION_POINT */ []` placeholder with the populated array, and writes to user's CWD as `skills-audit.html`.
 
-### 4e. User reviews + decides
+The HTML uses `escapeHtml()` on every interpolation that comes from agent output, so audit data containing HTML-shaped strings cannot inject script.
 
-User walks through 4 sections (existing rules, mismatches, new candidates, extensions). For each existing rule, the "Potential refresh" section shows what a refresh would entail and the value rating (low/medium/high).
+### 4e. User reviews
 
-User generates markdown, pastes back.
+In their browser:
 
-### 4f. Execute
+1. Each item is a card with verdict badge, confidence chip, invocation count, evidence quotes
+2. Items with `previousDecision` show a "📚 Last audit: you chose X — <reason>" hint inline
+3. "Apply all agent verdicts" bulk-loads recommendations
+4. The user walks through cards, overrides where they disagree
+5. Filters help: "Show undecided", "Show mismatches"
+6. "Generate Markdown" exports a structured report including a JSON envelope at the end (used by audit-history)
 
-Order of operations:
+### 4f. Receive decisions + confirm
 
-1. Write all new rule files (parallel)
-2. Read each existing rule that needs editing
-3. Edit each existing rule (extensions or refreshes)
-4. Read CLAUDE.md
-5. Edit CLAUDE.md to fix classifications + add new rule index entries
+The user pastes the markdown back. The skill parses the section structure for decisions and shows the deletion plan:
 
-### 4g. Verify
+```
+🗑️ X plugins to quarantine (manifest edit + cache mv to quarantine session)
+🗑️ Y standalone skills to quarantine (mv, not rm -rf)
+🔐 Z security findings to address
+📦 Quarantine session will be: ~/.claude/.audit-quarantine/<ISO-timestamp>/
 
-```bash
-ls ~/.claude/rules/
-wc -l ~/.claude/rules/*.md
+Reply 'go' to execute.
 ```
 
-Claude shows the final inventory.
+Auto mode does NOT bypass this gate. The cost of one extra round-trip is small.
 
-### 4h. Restart prompt + smoke tests
+### 4g. Execute via quarantine
 
-Claude lists smoke-test ideas — one per new rule — so the user can verify the rules are firing in the next session.
+```bash
+SESSION=$(bash <skill-dir>/scripts/quarantine.sh init)
 
-## Phase 5 — Wrap up
+# Backup the manifest (copy, don't move — Claude Code still needs it)
+bash <skill-dir>/scripts/quarantine.sh add "$SESSION" ~/.claude/plugins/installed_plugins.json --copy
 
-Claude offers to:
+# Edit the manifest atomically via Python
+python3 -c "<atomic edit>"
 
-- `/schedule` a quarterly re-run reminder
-- Update HANDOFF.md (if the user has a session-continuity skill)
-- Document the audit results somewhere persistent
+# MOVE plugin cache dirs into the quarantine
+bash <skill-dir>/scripts/quarantine.sh add "$SESSION" ~/.claude/plugins/cache/<marketplace>/<plugin>/
+
+# MOVE standalone skill dirs into the quarantine
+bash <skill-dir>/scripts/quarantine.sh add "$SESSION" ~/.claude/skills/<skill-name>/
+
+# Write the manifest with restore instructions
+bash <skill-dir>/scripts/quarantine.sh manifest "$SESSION"
+```
+
+Nothing is `rm -rf`'d. Everything is recoverable for 7 days. Run `quarantine.sh purge` after the TTL elapses (or manually if the user is confident).
+
+### 4h. Save decisions
+
+```bash
+python3 <skill-dir>/scripts/audit-history.py save skills <markdown-path>
+```
+
+Persists the user's decisions to `~/.claude/.audit-history/<ISO-timestamp>--skills.json` for the next audit.
+
+### 4i. Restart prompt
+
+```
+Restart Claude Code (quit + relaunch) to load the trimmed config.
+
+After restart you should see:
+  ✅ Smaller skill listing
+  ✅ Faster session startup
+  ✅ Slimmer slash command list
+
+If anything's wrong:
+  bash <skill-dir>/scripts/restore.sh <quarantine-session>
+```
+
+## Phase 5 — Rules audit half (if chosen)
+
+The rules half is structurally similar but uses 4 distinct agent types plus the security-pass agent. Each agent has a different deliverable rather than a different bucket. See `docs/HOW-IT-WORKS.md` references and `references/rules-audit-workflow.md` for the full sequence.
+
+The key v2 changes for the rules half:
+
+- The markdown export is **self-contained** — it includes the full `proposedContent` for new rules and the full `proposedSnippet` for extensions inline. The execution step doesn't depend on Claude remembering scrollback.
+- Before any edit, `CLAUDE.md` and the rules directory are **snapshotted to the same quarantine session** that the skills half used (or a new one if running rules-only). Rule edits are reversible from quarantine, not just "use your own version control" as in v1.
+- The official-spec agent's findings populate the HTML's spec-primer section, so the user can review it inline rather than reading the spec separately.
+
+## Phase 6 — Wrap up
+
+The skill offers (once, not pushing):
+
+- A scheduled re-audit (if the user has a `/schedule`-style mechanism available)
+- Restore-from-quarantine instructions if they're still uncertain
+- A document of the audit results somewhere persistent (handoff doc, decision log)
 
 ## What's in each file at runtime
 
-- **`SKILL.md`** — loaded when the skill triggers
-- **`references/skills-audit-workflow.md`** — loaded when starting the skills half
-- **`references/rules-audit-workflow.md`** — loaded when starting the rules half
-- **`references/parallel-agent-patterns.md`** — loaded when dispatching agents
-- **`references/safety-protocol.md`** — loaded before any destructive action
-- **`references/claude-config-spec.md`** — loaded when the rules audit needs to discuss frontmatter / spec
-- **`assets/skills-audit-template.html`** — read, populated, written to user's workspace
-- **`assets/rules-audit-template.html`** — read, populated, written to user's workspace
-- **`scripts/*.sh`** — executed as Bash commands
+| File | Loaded when |
+|---|---|
+| `SKILL.md` | Skill triggers |
+| `references/skills-audit-workflow.md` | Starting the skills half |
+| `references/rules-audit-workflow.md` | Starting the rules half |
+| `references/parallel-agent-patterns.md` | Dispatching agents |
+| `references/safety-protocol.md` | Before any destructive action |
+| `references/claude-config-spec.md` | Rules audit needs to discuss frontmatter / spec |
+| `assets/*-audit-template.html` | Read, populated, written to user's workspace |
+| `scripts/*.sh`, `scripts/*.py` | Executed via Bash |
 
-## Total round-trips
-
-For a typical run:
+## Total round-trips for a typical run
 
 - 1 turn: trigger
-- 1 turn: prerequisite + discovery
-- 1 turn: dispatch skills agents (parallel — 5 agent calls in one turn)
+- 1 turn: prerequisite + discovery + history check
+- 1 turn: dispatch skills agents (parallel — multiple Agent calls in one turn)
 - ~5 turns: agent completion notifications (one per agent, async)
 - 1 turn: synthesise + build skills HTML
-- (User reviews — out of band, however long they take)
+- (User reviews — out of band, 20-30 min)
 - 1 turn: receive markdown, confirm plan
-- 1 turn: execute deletions
-- 1 turn: dispatch rules agents (parallel — 4 agent calls in one turn)
-- ~4 turns: agent completion notifications
+- 1 turn: execute via quarantine + save decisions
+- 1 turn: dispatch rules agents (parallel)
+- ~5 turns: agent completion notifications
 - 1 turn: synthesise + build rules HTML
-- (User reviews — out of band)
+- (User reviews — out of band, 20-30 min)
 - 1 turn: receive markdown, confirm plan
-- 1 turn: execute rule changes
+- 1 turn: execute rule changes (with quarantine snapshot first) + save decisions
 
 Total: ~15 turns + agent runtime + user review time. Most of the wall-clock cost is the user reviewing in the browser, which is exactly the work that requires their judgment.

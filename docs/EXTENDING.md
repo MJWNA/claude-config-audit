@@ -18,17 +18,7 @@ If you want to add a fifth agent (e.g. a "performance impact" agent that estimat
 
 ## Different categorisation
 
-Edit `references/skills-audit-workflow.md`'s "Phase 2 — Categorise for parallel dispatch" section. The defaults are:
-
-- Core dev tooling
-- Workspace / hooks / config
-- Frontend / design
-- Platform / infrastructure
-- Communications
-- Meta / skill authoring
-- Domain-specific user skills
-
-If your team works in finance and has very different categories, replace these. The skill doesn't hard-code them — it uses them as suggestions in the workflow guide.
+Edit `references/skills-audit-workflow.md`'s "Phase 2 — Categorise for parallel dispatch" section. The defaults are common purpose categories (dev tooling, workspace/config, design, platform, communications, meta, domain-specific) but the skill clusters items by purpose at runtime — it doesn't hard-code names. If your team works in a domain with very different patterns (finance, scientific computing, embedded), replace the example categories with ones that match.
 
 ## Different HTML styling
 
@@ -100,14 +90,30 @@ The discovery output is consumed by Claude (not piped to another script), so any
 
 ## Adding a third audit half
 
-Currently the skill audits two halves: skills+plugins and rules. If you want to add a third (e.g. project-scope rules audit, or settings.json audit), the pattern is:
+Currently the skill audits two halves: skills+plugins (with hooks/MCPs covered by the security-pass agent) and rules. If you want to add a third (e.g. dedicated settings.json deep-dive, or auto-memory cleanup), the pattern is:
 
 1. Add a new reference playbook: `references/<halfname>-workflow.md`
-2. Add a new HTML template: `assets/<halfname>-audit-template.html`
-3. Update `SKILL.md` to mention the new half (in "When to run which half" section)
-4. Update `docs/HOW-IT-WORKS.md` walkthrough
+2. Add a new HTML template: `assets/<halfname>-audit-template.html` — use the existing two as starting points (escapeHtml, decision UI, JSON envelope export are all identical patterns)
+3. Add a slash command: `commands/audit-<halfname>.md`
+4. Update `SKILL.md` to mention the new half
+5. Update `docs/HOW-IT-WORKS.md` walkthrough
+6. Add eval queries to `evals/evals.json` covering the new triggers
 
-The two existing halves are independent enough that a third can slot in without touching them.
+The existing halves are independent enough that a third can slot in without touching them.
+
+## Customising the quarantine TTL
+
+Default: 7 days. Override with `CLAUDE_CONFIG_AUDIT_TTL_DAYS=30` (or whatever) in your shell environment when running `quarantine.sh purge`. The TTL is read at purge time, not at quarantine-creation time, so you can change your mind retroactively.
+
+## Customising decision memory
+
+`scripts/audit-history.py` writes one JSON file per audit run to `~/.claude/.audit-history/`. The format is documented at the top of the script. You can:
+
+- **Disable history** — delete `~/.claude/.audit-history/` and the next audit will treat itself as the first.
+- **Reset history** — same as above; or `rm` specific files to forget specific audits.
+- **Migrate history** — copy `~/.claude/.audit-history/` between machines to share decision memory across your devices.
+
+The history is purely advisory — the skill works without it; it just re-walks every item each time.
 
 ## Skipping the HTML
 

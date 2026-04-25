@@ -14,6 +14,7 @@
          id: 'r-<name>',
          name: '<name>.md',
          verdict: 'keep' | 'edit' | 'refresh',
+         confidence: 'high' | 'medium' | 'low',  // v2 — agent's confidence in the verdict
          sizeLines: 84, sizeKB: '3.5KB',
          currentFM: 'description (only)' | 'paths: ...' | 'none (always-loaded)',
          actualLoad: 'always' | 'path-scoped',
@@ -26,7 +27,8 @@
          quality: '...fresh / stale / has issues...',
          issues: '...specific problems...',
          actionItems: ['action 1', 'action 2'],
-         agentReason: '...one paragraph reasoning for verdict...'
+         agentReason: '...one paragraph reasoning for verdict...',
+         previousDecision: { decision, note, date } | undefined  // v2 — populated from audit-history.py
        }
 
      mismatches: CLAUDE.md classification fixes. Each item:
@@ -327,22 +329,32 @@ function generateMarkdown() {
   decisionsBy(existingRules, 'keep').forEach(r => md += `- **${r.name}**${state[r.id]?.note ? ' — ' + state[r.id].note : ''}\n`);
 
   md += `\n## ✏️ Existing rules — edit/refresh\n`;
-  decisionsBy(existingRules, 'edit').forEach(r => md += `- **${r.name}** — ${r.actionItems.join('; ')}${state[r.id]?.note ? ' [my note: ' + state[r.id].note + ']' : ''}\n`);
+  decisionsBy(existingRules, 'edit').forEach(r => md += `- **${r.name}** — ${(r.actionItems || []).join('; ')}${state[r.id]?.note ? ' [my note: ' + state[r.id].note + ']' : ''}\n`);
   decisionsBy(existingRules, 'refresh').forEach(r => md += `- **${r.name}** (major refresh)${state[r.id]?.note ? ' — ' + state[r.id].note : ''}\n`);
 
   md += `\n## ⚖️ CLAUDE.md classification fixes\n`;
   decisionsBy(mismatches, 'edit').forEach(m => md += `- **${m.name}** — change index from "${m.currentDecl}" to: ${m.actualBehavior}\n`);
 
+  // New rules — emit the full proposed file body so the markdown export is
+  // self-contained. Without this, the execution step relies on Claude still
+  // having the proposed content in scrollback, which breaks if the conversation
+  // compacts between "user generates markdown" and "Claude writes the file".
   md += `\n## ✨ New rules to add\n`;
   decisionsBy(newRules, 'add').forEach(r => {
-    md += `\n### ${r.name} (${r.loadingMode})\nSource: ${r.source} — ${r.frequency}\n`;
+    md += `\n### ${r.name} (${r.loadingMode})\n`;
+    md += `Source: ${r.source} — ${r.frequency}\n`;
     if (state[r.id]?.note) md += `My note: ${state[r.id].note}\n`;
+    md += `\n<details><summary>Full file content (paste into ~/.claude/rules/${r.name})</summary>\n\n\`\`\`markdown\n${r.proposedContent || '(proposedContent missing — re-run audit)'}\n\`\`\`\n\n</details>\n`;
   });
 
+  // Extensions — emit the full snippet for the same reason.
   md += `\n## 🪡 Extensions to existing rules\n`;
   decisionsBy(extensions, 'add').forEach(e => {
-    md += `- **${e.target}** — ${e.what}\n`;
-    if (state[e.id]?.note) md += `  - my note: ${state[e.id].note}\n`;
+    md += `\n### Extend ${e.target}\n`;
+    md += `**What:** ${e.what}\n`;
+    md += `**Where:** ${e.whereInTarget}\n`;
+    if (state[e.id]?.note) md += `**My note:** ${state[e.id].note}\n`;
+    md += `\n\`\`\`markdown\n${e.proposedSnippet || '(proposedSnippet missing — re-run audit)'}\n\`\`\`\n`;
   });
 
   md += `\n## 🤔 Maybe / undecided\n`;
@@ -350,6 +362,15 @@ function generateMarkdown() {
   [...existingRules, ...mismatches, ...newRules, ...extensions].forEach(item => {
     if (!state[item.id]?.decision) md += `- **${item.name || item.target}** — undecided\n`;
   });
+
+  // Embed a JSON envelope at the end so a follow-up audit can read the user's
+  // decisions verbatim. Decision-memory script reads this from the export.
+  const envelope = {
+    auditType: 'rules',
+    generatedAt: new Date().toISOString(),
+    decisions: Object.fromEntries(Object.entries(state).filter(([_, v]) => v && v.decision))
+  };
+  md += `\n---\n<!-- claude-config-audit:decisions\n${JSON.stringify(envelope, null, 2)}\n-->\n`;
 
   document.getElementById('output').value = md;
   document.getElementById('output-section').scrollIntoView({ behavior: 'smooth' });
@@ -362,128 +383,153 @@ function copyOutput() {
   c.style.display = 'inline'; setTimeout(() => c.style.display = 'none', 2000);
 }
 
-function escapeHtml(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+// Defence-in-depth: every interpolation that comes from the audit data
+// (agent output, rule content, evidence quotes) gets escaped. The audit data
+// crosses an agent → template boundary and could legitimately contain
+// HTML-looking strings — they must render as text, not be parsed.
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Allow-list of decision values for class names so a malformed verdict can't
+// inject a class with arbitrary attributes.
+const SAFE_VERDICT = (v, allowed) => allowed.includes(v) ? v : allowed[0];
 
 function renderExistingRule(r) {
   const s = state[r.id] || {};
-  const verdictIcon = { keep: '✅', edit: '✏️', refresh: '🔥' }[r.verdict];
+  const verdictKey = SAFE_VERDICT(r.verdict, ['keep', 'edit', 'refresh']);
+  const verdictIcon = { keep: '✅', edit: '✏️', refresh: '🔥' }[verdictKey];
   const matchIcon = r.match ? '✅' : '⚠️';
   const refresh = (refreshes && refreshes[r.id]) || { value: 'low', scope: '', benefit: '' };
-  const refreshBadgeColor = { 'high': '#ef4444', 'medium-high': '#f97316', 'medium': '#f59e0b', 'low': '#64748b' }[refresh.value] || '#64748b';
-  const refreshIcon = { 'high': '🔥🔥🔥', 'medium-high': '🔥🔥', 'medium': '🔥', 'low': '·' }[refresh.value] || '·';
+  const refreshValue = SAFE_VERDICT(refresh.value, ['low', 'medium', 'medium-high', 'high']);
+  const refreshBadgeColor = { 'high': '#ef4444', 'medium-high': '#f97316', 'medium': '#f59e0b', 'low': '#64748b' }[refreshValue];
+  const refreshIcon = { 'high': '🔥🔥🔥', 'medium-high': '🔥🔥', 'medium': '🔥', 'low': '·' }[refreshValue];
+  const safeId = encodeURIComponent(r.id);
+  const confidence = r.confidence || 'medium';
+  const confidenceIcon = { high: '🟢', medium: '🟡', low: '🔴' }[confidence] || '🟡';
   const decisionHtml = ['keep', 'edit', 'refresh'].map(d => {
     const checked = s.decision === d ? 'checked' : '';
     const icon = { keep: '✅ keep', edit: '✏️ edit', refresh: '🔥 refresh' }[d];
-    return `<label><input type="radio" name="d-${r.id}" value="${d}" ${checked} onchange="setDecision('${r.id}','${d}')"><span>${icon}</span></label>`;
+    return `<label><input type="radio" name="d-${escapeHtml(safeId)}" value="${d}" ${checked} onchange="setDecision('${escapeHtml(safeId)}','${d}')"><span>${icon}</span></label>`;
   }).join('');
-  return `<div class="rule" data-id="${r.id}" ${s.decision ? `data-decision="${s.decision}"` : ''} data-open="false">
-    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${r.id}')">
-      <span class="rule-name">${r.name}</span>
-      <span class="rule-tag">${matchIcon} ${r.actualLoad}</span>
-      <span class="rule-tag size">${r.sizeLines}L · ${r.sizeKB}</span>
-      <span class="verdict-badge verdict-${r.verdict}">🤖 ${verdictIcon} ${r.verdict.toUpperCase()}</span>
-      <span class="rule-tag" style="background: rgba(0,0,0,0.4); color: ${refreshBadgeColor}; border: 1px solid ${refreshBadgeColor};">${refreshIcon} refresh: ${refresh.value}</span>
+  return `<div class="rule" data-id="${escapeHtml(r.id)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
+    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${escapeHtml(safeId)}')">
+      <span class="rule-name">${escapeHtml(r.name)}</span>
+      <span class="rule-tag">${matchIcon} ${escapeHtml(r.actualLoad)}</span>
+      <span class="rule-tag size">${escapeHtml(String(r.sizeLines))}L · ${escapeHtml(r.sizeKB)}</span>
+      <span class="verdict-badge verdict-${verdictKey}">🤖 ${verdictIcon} ${verdictKey.toUpperCase()}</span>
+      <span class="rule-tag" title="Agent confidence">${confidenceIcon} ${escapeHtml(confidence)}</span>
+      <span class="rule-tag" style="background: rgba(0,0,0,0.4); color: ${refreshBadgeColor}; border: 1px solid ${refreshBadgeColor};">${refreshIcon} refresh: ${escapeHtml(refreshValue)}</span>
       <div class="decision" onclick="event.stopPropagation()">${decisionHtml}</div>
     </div>
     <div class="rule-body">
-      <h4>📖 What this rule does</h4><p>${r.whatItDoes}</p>
-      <h4>🎯 When it fires</h4><p>${r.whenItFires}</p>
-      <h4>💡 Why it exists</h4><p>${r.whyItExists}</p>
-      <div class="without"><strong>🚫 Without this rule:</strong> ${r.withoutThisRule}</div>
+      <h4>📖 What this rule does</h4><p>${escapeHtml(r.whatItDoes)}</p>
+      <h4>🎯 When it fires</h4><p>${escapeHtml(r.whenItFires)}</p>
+      <h4>💡 Why it exists</h4><p>${escapeHtml(r.whyItExists)}</p>
+      <div class="without"><strong>🚫 Without this rule:</strong> ${escapeHtml(r.withoutThisRule)}</div>
       <h4>📊 Frontmatter + loading</h4>
-      <p><strong>Current frontmatter:</strong> <code>${r.currentFM}</code></p>
-      <p><strong>Declared in CLAUDE.md:</strong> ${r.declaredLoad}</p>
-      <p><strong>Actually loads:</strong> ${r.actualLoad} ${r.match ? '✅ match' : '⚠️ mismatch'}</p>
-      <h4>🔍 Quality assessment</h4><p>${r.quality}</p>
-      <h4>⚠️ Issues</h4><p>${r.issues}</p>
-      ${r.actionItems.length ? `<h4>📝 Action items (small edits)</h4><ul>${r.actionItems.map(a => '<li>' + a + '</li>').join('')}</ul>` : ''}
+      <p><strong>Current frontmatter:</strong> <code>${escapeHtml(r.currentFM)}</code></p>
+      <p><strong>Declared in CLAUDE.md:</strong> ${escapeHtml(r.declaredLoad)}</p>
+      <p><strong>Actually loads:</strong> ${escapeHtml(r.actualLoad)} ${r.match ? '✅ match' : '⚠️ mismatch'}</p>
+      <h4>🔍 Quality assessment</h4><p>${escapeHtml(r.quality)}</p>
+      <h4>⚠️ Issues</h4><p>${escapeHtml(r.issues)}</p>
+      ${(r.actionItems || []).length ? `<h4>📝 Action items (small edits)</h4><ul>${(r.actionItems || []).map(a => '<li>' + escapeHtml(a) + '</li>').join('')}</ul>` : ''}
       <div style="background: rgba(239, 68, 68, 0.08); border-left: 3px solid ${refreshBadgeColor}; padding: 10px 14px; margin: 10px 0; border-radius: 4px; font-size: 13px;">
-        <p style="margin: 0 0 6px 0;"><strong style="color: ${refreshBadgeColor};">${refreshIcon} Potential refresh — value: ${refresh.value.toUpperCase()}</strong></p>
-        <p style="margin: 4px 0;"><strong>Scope:</strong> ${refresh.scope}</p>
-        <p style="margin: 4px 0;"><strong>Benefit:</strong> ${refresh.benefit}</p>
+        <p style="margin: 0 0 6px 0;"><strong style="color: ${refreshBadgeColor};">${refreshIcon} Potential refresh — value: ${escapeHtml(refreshValue.toUpperCase())}</strong></p>
+        <p style="margin: 4px 0;"><strong>Scope:</strong> ${escapeHtml(refresh.scope)}</p>
+        <p style="margin: 4px 0;"><strong>Benefit:</strong> ${escapeHtml(refresh.benefit)}</p>
       </div>
-      <div class="agent-reason"><strong>🤖 Agent verdict — ${r.verdict.toUpperCase()}:</strong> ${r.agentReason}</div>
-      <textarea class="note" placeholder="Notes / override reason..." onchange="setNote('${r.id}', this.value)">${escapeHtml(s.note)}</textarea>
+      ${r.previousDecision ? `<p><span class="rule-tag">📚 Last audit: you chose <strong>${escapeHtml(r.previousDecision.decision)}</strong>${r.previousDecision.note ? ' — ' + escapeHtml(r.previousDecision.note) : ''} on ${escapeHtml(r.previousDecision.date || '?')}</span></p>` : ''}
+      <div class="agent-reason"><strong>🤖 Agent verdict — ${verdictKey.toUpperCase()}:</strong> ${escapeHtml(r.agentReason)}</div>
+      <textarea class="note" placeholder="Notes / override reason..." onchange="setNote('${escapeHtml(safeId)}', this.value)">${escapeHtml(s.note)}</textarea>
     </div></div>`;
 }
 
 function renderMismatch(m) {
   const s = state[m.id] || {};
+  const safeId = encodeURIComponent(m.id);
   const decisionHtml = ['edit', 'skip'].map(d => {
     const checked = s.decision === d ? 'checked' : '';
     const icon = { edit: '✏️ fix index', skip: '⏭️ leave it' }[d];
-    return `<label><input type="radio" name="d-${m.id}" value="${d}" ${checked} onchange="setDecision('${m.id}','${d}')"><span>${icon}</span></label>`;
+    return `<label><input type="radio" name="d-${escapeHtml(safeId)}" value="${d}" ${checked} onchange="setDecision('${escapeHtml(safeId)}','${d}')"><span>${icon}</span></label>`;
   }).join('');
-  return `<div class="rule" data-id="${m.id}" ${s.decision ? `data-decision="${s.decision}"` : ''} data-open="false">
-    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${m.id}')">
-      <span class="rule-name">${m.name}</span>
-      <span class="rule-tag warn">declared: ${m.currentDecl}</span>
-      <span class="rule-tag">actual: ${m.actualBehavior.split('(')[0].trim()}</span>
+  return `<div class="rule" data-id="${escapeHtml(m.id)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
+    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${escapeHtml(safeId)}')">
+      <span class="rule-name">${escapeHtml(m.name)}</span>
+      <span class="rule-tag warn">declared: ${escapeHtml(m.currentDecl)}</span>
+      <span class="rule-tag">actual: ${escapeHtml(String(m.actualBehavior).split('(')[0].trim())}</span>
       <span class="verdict-badge verdict-edit">🤖 ✏️ FIX INDEX</span>
       <div class="decision" onclick="event.stopPropagation()">${decisionHtml}</div>
     </div>
     <div class="rule-body">
       <h4>The discrepancy</h4>
-      <p><strong>CLAUDE.md says:</strong> ${m.currentDecl}</p>
-      <p><strong>Actually:</strong> ${m.actualBehavior}</p>
-      <div class="agent-reason"><strong>🤖 Why fix:</strong> ${m.rationale}</div>
-      <textarea class="note" placeholder="Notes..." onchange="setNote('${m.id}', this.value)">${escapeHtml(s.note)}</textarea>
+      <p><strong>CLAUDE.md says:</strong> ${escapeHtml(m.currentDecl)}</p>
+      <p><strong>Actually:</strong> ${escapeHtml(m.actualBehavior)}</p>
+      <div class="agent-reason"><strong>🤖 Why fix:</strong> ${escapeHtml(m.rationale)}</div>
+      <textarea class="note" placeholder="Notes..." onchange="setNote('${escapeHtml(safeId)}', this.value)">${escapeHtml(s.note)}</textarea>
     </div></div>`;
 }
 
 function renderNewRule(r) {
   const s = state[r.id] || {};
+  const safeId = encodeURIComponent(r.id);
   const verdictIcon = r.recommend === 'STRONG' ? '✨' : '🤔';
   const verdictClass = r.verdict === 'add' ? 'add' : 'maybe';
   const decisionHtml = ['add', 'maybe', 'skip'].map(d => {
     const checked = s.decision === d ? 'checked' : '';
     const icon = { add: '✨ add', maybe: '🤔 maybe', skip: '⏭️ skip' }[d];
-    return `<label><input type="radio" name="d-${r.id}" value="${d}" ${checked} onchange="setDecision('${r.id}','${d}')"><span>${icon}</span></label>`;
+    return `<label><input type="radio" name="d-${escapeHtml(safeId)}" value="${d}" ${checked} onchange="setDecision('${escapeHtml(safeId)}','${d}')"><span>${icon}</span></label>`;
   }).join('');
   const sourceTag = r.source === 'session' ? '<span class="rule-tag session">📜 session-history</span>' : '<span class="rule-tag spec">🗺️ codebase scan</span>';
-  return `<div class="rule" data-id="${r.id}" ${s.decision ? `data-decision="${s.decision}"` : ''} data-open="false">
-    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${r.id}')">
-      <span class="rule-name">${r.name}</span>
+  return `<div class="rule" data-id="${escapeHtml(r.id)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
+    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${escapeHtml(safeId)}')">
+      <span class="rule-name">${escapeHtml(r.name)}</span>
       ${sourceTag}
-      <span class="rule-tag">${r.frequency}</span>
-      <span class="rule-tag size">${r.cost || ''}</span>
-      <span class="verdict-badge verdict-${verdictClass}">🤖 ${verdictIcon} ${r.recommend}</span>
+      <span class="rule-tag">${escapeHtml(r.frequency)}</span>
+      <span class="rule-tag size">${escapeHtml(r.cost || '')}</span>
+      <span class="verdict-badge verdict-${verdictClass}">🤖 ${verdictIcon} ${escapeHtml(r.recommend)}</span>
       <div class="decision" onclick="event.stopPropagation()">${decisionHtml}</div>
     </div>
     <div class="rule-body">
-      <h4>📖 Summary</h4><p>${r.contentSketch}</p>
+      <h4>📖 Summary</h4><p>${escapeHtml(r.contentSketch)}</p>
       <h4>📊 Loading mode</h4>
-      <p><strong>${r.loadingMode}</strong> — ${r.loadingMode.includes('always') ? 'no frontmatter, loads every session (per official spec)' : 'paths frontmatter, loads when matching files are read'}</p>
-      <h4>🔬 Evidence</h4><p>${r.evidence}</p>
-      <div class="agent-reason"><strong>🤖 Agent verdict — ${r.recommend}:</strong> ${r.agentReason}</div>
+      <p><strong>${escapeHtml(r.loadingMode)}</strong> — ${String(r.loadingMode).includes('always') ? 'no frontmatter, loads every session (per official spec)' : 'paths frontmatter, loads when matching files are read'}</p>
+      <h4>🔬 Evidence</h4><p>${escapeHtml(r.evidence)}</p>
+      <div class="agent-reason"><strong>🤖 Agent verdict — ${escapeHtml(r.recommend)}:</strong> ${escapeHtml(r.agentReason)}</div>
       <details class="inner-detail">
-        <summary>📄 Full proposed file content (${r.name})</summary>
+        <summary>📄 Full proposed file content (${escapeHtml(r.name)})</summary>
         <div><pre class="code">${escapeHtml(r.proposedContent)}</pre></div>
       </details>
-      <textarea class="note" placeholder="Notes / customisations..." onchange="setNote('${r.id}', this.value)">${escapeHtml(s.note)}</textarea>
+      <textarea class="note" placeholder="Notes / customisations..." onchange="setNote('${escapeHtml(safeId)}', this.value)">${escapeHtml(s.note)}</textarea>
     </div></div>`;
 }
 
 function renderExtension(e) {
   const s = state[e.id] || {};
+  const safeId = encodeURIComponent(e.id);
   const decisionHtml = ['add', 'skip'].map(d => {
     const checked = s.decision === d ? 'checked' : '';
     const icon = { add: '✨ add', skip: '⏭️ skip' }[d];
-    return `<label><input type="radio" name="d-${e.id}" value="${d}" ${checked} onchange="setDecision('${e.id}','${d}')"><span>${icon}</span></label>`;
+    return `<label><input type="radio" name="d-${escapeHtml(safeId)}" value="${d}" ${checked} onchange="setDecision('${escapeHtml(safeId)}','${d}')"><span>${icon}</span></label>`;
   }).join('');
-  return `<div class="rule" data-id="${e.id}" ${s.decision ? `data-decision="${s.decision}"` : ''} data-open="false">
-    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${e.id}')">
-      <span class="rule-name">${e.target} → ${e.what}</span>
+  return `<div class="rule" data-id="${escapeHtml(e.id)}" ${s.decision ? `data-decision="${escapeHtml(s.decision)}"` : ''} data-open="false">
+    <div class="rule-header" onclick="if(event.target.closest('.decision'))return; toggleRule('${escapeHtml(safeId)}')">
+      <span class="rule-name">${escapeHtml(e.target)} → ${escapeHtml(e.what)}</span>
       <span class="verdict-badge verdict-add">🤖 ✨ ADD</span>
       <div class="decision" onclick="event.stopPropagation()">${decisionHtml}</div>
     </div>
     <div class="rule-body">
-      <h4>📖 What to add</h4><p>${e.what}</p>
-      <h4>📁 Where in target file</h4><p>${e.whereInTarget}</p>
-      <h4>💡 Rationale</h4><p>${e.rationale}</p>
+      <h4>📖 What to add</h4><p>${escapeHtml(e.what)}</p>
+      <h4>📁 Where in target file</h4><p>${escapeHtml(e.whereInTarget)}</p>
+      <h4>💡 Rationale</h4><p>${escapeHtml(e.rationale)}</p>
       <h4>📄 Proposed snippet</h4>
       <pre class="code">${escapeHtml(e.proposedSnippet)}</pre>
-      <textarea class="note" placeholder="Notes..." onchange="setNote('${e.id}', this.value)">${escapeHtml(s.note)}</textarea>
+      <textarea class="note" placeholder="Notes..." onchange="setNote('${escapeHtml(safeId)}', this.value)">${escapeHtml(s.note)}</textarea>
     </div></div>`;
 }
 
