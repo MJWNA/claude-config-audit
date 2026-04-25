@@ -30,7 +30,6 @@ case "$session" in
 esac
 
 restored=0
-skipped=0
 conflicts=0
 
 find "$session" -mindepth 1 -maxdepth 1 -not -name 'MANIFEST.md' -print | while IFS= read -r p; do
